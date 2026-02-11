@@ -20,6 +20,9 @@ let currentY = 20;
 // Step source selection
 let useDeviceStep = false;
 
+// Current IMU sub-tab: '3d' | 'steps' | 'game'
+let currentImuMode = '3d';
+
 // CSV Recording
 let csvRows = [];
 let csvRecording = false;
@@ -52,19 +55,29 @@ function setTab(id) {
 }
 
 function setImuMode(mode) {
+    currentImuMode = mode;
     document.querySelectorAll('.sub-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`button[onclick="setImuMode('${mode}')"]`).classList.add('active');
     const pedo = document.getElementById('pedometer-view');
     const graphs = document.getElementById('graph-layer');
+    const gameView = document.getElementById('game-view');
+    const imuContent = document.getElementById('imu-content');
+    pedo.classList.remove('active');
+    if (gameView) gameView.classList.remove('active');
+    graphs.style.display = 'none';
+    imuContent.style.display = 'block';
+
     if (mode === 'steps') {
         pedo.classList.add('active');
-        graphs.style.display = 'none';
+    } else if (mode === 'game') {
+        if (gameView) gameView.classList.add('active');
+        imuContent.style.display = 'none';
+        fbResizeCanvas();
     } else {
-        pedo.classList.remove('active');
         graphs.style.display = 'flex';
     }
     // Recalculate 3D canvas size after layout change
-    setTimeout(resize3D, 50);
+    if (mode === '3d') setTimeout(resize3D, 50);
 }
 
 // Step source checkbox handler
@@ -325,24 +338,8 @@ let streamTimeout; // Global or outer scope variable
 function handleIMU(e) {
     const v = e.target.value;
     if (v.byteLength < 24) return;
-    ppsCount++;
 
-    // --- AUTO-TOGGLE UI ON ---
-    const btn = document.getElementById('startBtn');
-    if (btn && btn.innerText !== "Streaming...") {
-        btn.innerText = "Streaming...";
-        btn.classList.add('btn-streaming');
-        // Reset target height so the board "lands" when data starts
-        targetY = 0; 
-    }
-
-    // --- WATCHDOG: Toggle UI off if data stops for 1 second ---
-    clearTimeout(streamTimeout);
-    streamTimeout = setTimeout(() => {
-        resetStreamBtn();
-    }, 1000);
-    
-    // --- 1. Parse Data ---
+    // --- 1. Parse Data (always needed) ---
     const ax = v.getFloat32(0, true);
     const ay = v.getFloat32(4, true);
     const az = v.getFloat32(8, true);
@@ -350,12 +347,33 @@ function handleIMU(e) {
     const gy = v.getFloat32(16, true);
     const gz = v.getFloat32(20, true);
 
-    // --- 2. Calculate Time Delta ---
+    // --- GAME MODE: minimal path, skip everything else ---
+    if (currentImuMode === 'game') {
+        const imuPitchDeg = Math.atan2(-ax, Math.sqrt(ay * ay + az * az)) * (180 / Math.PI);
+        fbHandlePitch(imuPitchDeg);
+        return;
+    }
+
+    // --- Normal mode processing below ---
+    ppsCount++;
+
     const now = performance.now();
-    const dt = (now - lastTime) / 1000; // Seconds
+    const dt = (now - lastTime) / 1000;
     lastTime = now;
 
-    // --- CSV Recording ---
+    // AUTO-TOGGLE UI ON
+    const btn = document.getElementById('startBtn');
+    if (btn && btn.innerText !== "Streaming...") {
+        btn.innerText = "Streaming...";
+        btn.classList.add('btn-streaming');
+        targetY = 0; 
+    }
+
+    // WATCHDOG
+    clearTimeout(streamTimeout);
+    streamTimeout = setTimeout(() => { resetStreamBtn(); }, 1000);
+
+    // CSV Recording
     if (csvRecording) {
         const ts = (now - csvStartTime).toFixed(2);
         const stepEl = document.getElementById('stepBig');
@@ -363,28 +381,21 @@ function handleIMU(e) {
         csvRows.push(`${ts},${ax.toFixed(4)},${ay.toFixed(4)},${az.toFixed(4)},${gx.toFixed(4)},${gy.toFixed(4)},${gz.toFixed(4)},${steps}`);
     }
 
-    // --- 3. Update Text ---
+    // Update Text
     document.getElementById('accVal').innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
     document.getElementById('gyroVal').innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
 
-    // --- 4. Update Graphs ---
+    // Update Graphs
     accHist.push([ax, ay, az]); accHist.shift();
     gyroHist.push([gx, gy, gz]); gyroHist.shift();
 
-    // --- 5. 3D Orientation Calculation ---
-    // Pitch/Roll from Accelerometer (Absolute)
+    // 3D Orientation
     tPitch = -Math.atan2(-ax, Math.sqrt(ay * ay + az * az));
     tRoll = -Math.atan2(ay, az);
-
-    // Yaw from Gyroscope Integration (Relative)
-    // gz is in degrees/s, convert to radians/s for Three.js
-    // Note: Axis mapping depends on chip orientation. Usually Gyro Z controls Yaw.
     const gyroRad = gz * (Math.PI / 180);
-    // Integrate: angle += rate * time
-    // We subtract because 3D engines often have inverted Y rotation
     tYaw -= gyroRad * dt; 
 
-    // Local step estimation (used when device pedometer is not selected)
+    // Local step estimation
     if (!useDeviceStep) {
         const magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
         if (magnitude > 15) {
@@ -462,6 +473,10 @@ function drawGraph(cv, data, scale) {
 function animate() {
     requestAnimationFrame(animate);
 
+    // Skip heavy 3D rendering when not on the 3D view tab
+    const imuTabActive = document.getElementById('view-imu').classList.contains('active');
+    if (!imuTabActive || currentImuMode !== '3d') return;
+
     if (board3d) {
         // Fly-In Animation
         currentY += (targetY - currentY) * 0.05; 
@@ -470,11 +485,8 @@ function animate() {
         // Rotation Smoothing with Glitch Fix
         const smooth = document.getElementById('smoothCheck').checked;
         if (smooth) {
-            // Apply Accelerometer (Pitch/Roll)
             board3d.rotation.x = lerpAngle(board3d.rotation.x, tPitch, LERP);
             board3d.rotation.z = lerpAngle(board3d.rotation.z, tRoll, LERP);
-            
-            // Apply Gyroscope (Yaw) - Note: Yaw is usually Y-axis in 3D space
             board3d.rotation.y = lerpAngle(board3d.rotation.y, tYaw, LERP);
         } else {
             board3d.rotation.x = tPitch;
@@ -489,11 +501,8 @@ function animate() {
     }
 
     renderer.render(scene, camera);
-
-    if (document.getElementById('view-imu').classList.contains('active')) {
-        drawGraph(accCv, accHist, 5);
-        drawGraph(gyrCv, gyroHist, 5.0);
-    }
+    drawGraph(accCv, accHist, 5);
+    drawGraph(gyrCv, gyroHist, 5.0);
 }
 
 function resize3D() {
@@ -506,3 +515,355 @@ function resize3D() {
 }
 window.addEventListener('resize', resize3D);
 init3D();
+
+// =============================================
+// FLAPPY BIRD GAME (IMU-controlled)
+// =============================================
+const fb = {
+    canvas: null, ctx: null,
+    W: 800, H: 500,
+
+    // Config (scaled relative to H)
+    BIRD_SIZE: 28,
+    BIRD_X_FRAC: 0.18,
+    PIPE_W: 55,
+    PIPE_GAP: 190,
+    PIPE_SPEED: 2.5,
+    PIPE_INTERVAL: 2200,
+    GRAVITY: 0.22,
+    MAX_FALL: 5.5,
+    KEY_FLAP: -5.5,
+
+    // Flap detection
+    FLAP_VEL_THRESH: 4,
+    FLAP_RANGE_THRESH: 15,
+    FLAP_POWER_MIN: -5,
+    FLAP_POWER_MAX: -10,
+    FLAP_SENSITIVITY: 0.3,
+    FLAP_COOLDOWN: 120,
+    SWING_TIMEOUT: 300,
+
+    // State
+    running: false, over: false,
+    score: 0, highScore: 0,
+    birdY: 0, vel: 0,
+    pipes: [], lastSpawn: 0, lastFlap: 0,
+    isFlapping: false, flapStrength: 0,
+    mode: 'simple',
+
+    // Pitch tracking
+    pitch: 0, lastPitch: 0, pitchVel: 0,
+    swingActive: false, swingStartPitch: 0, swingStartTime: 0, swingRange: 0,
+
+    // Stars (pre-generated)
+    stars: [],
+
+    init() {
+        this.canvas = document.getElementById('fbCanvas');
+        if (!this.canvas) return;
+        this.ctx = this.canvas.getContext('2d');
+
+        // Generate stars once
+        for (let i = 0; i < 40; i++) {
+            this.stars.push([Math.random(), Math.random(), 0.5 + Math.random() * 1.5]);
+        }
+
+        document.getElementById('fbStartBtn').addEventListener('click', () => fb.start());
+        document.getElementById('fbModeBtn').addEventListener('click', () => fb.toggleMode());
+
+        // Keyboard fallback
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'ArrowUp') {
+                // Only handle if game tab is active
+                const gv = document.getElementById('game-view');
+                if (!gv || !gv.classList.contains('active')) return;
+                if (this.running) {
+                    const now = Date.now();
+                    if (now - this.lastFlap > this.FLAP_COOLDOWN) {
+                        this.vel = this.KEY_FLAP;
+                        this.lastFlap = now;
+                        this.isFlapping = true;
+                        this.flapStrength = 0.7;
+                    }
+                } else {
+                    this.start();
+                }
+                e.preventDefault();
+            }
+            if (e.key === 'Enter') {
+                const gv = document.getElementById('game-view');
+                if (!gv || !gv.classList.contains('active')) return;
+                if (!this.running) this.start();
+                e.preventDefault();
+            }
+        });
+
+        // Load high score
+        const saved = localStorage.getItem('fbHighScore');
+        if (saved) this.highScore = parseInt(saved) || 0;
+
+        this.resize();
+        this.loop();
+    },
+
+    resize() {
+        if (!this.canvas) return;
+        const cont = document.getElementById('game-view');
+        if (!cont) return;
+        this.W = cont.clientWidth || 800;
+        this.H = cont.clientHeight || 500;
+        this.canvas.width = this.W;
+        this.canvas.height = this.H;
+        // Scale game params relative to height
+        const s = this.H / 500;
+        this.BIRD_SIZE = Math.round(28 * s);
+        this.PIPE_GAP = Math.round(190 * s);
+        this.PIPE_W = Math.round(55 * s);
+        this.PIPE_SPEED = 2.5 * s;
+        this.GRAVITY = 0.22 * s;
+        this.MAX_FALL = 5.5 * s;
+        this.KEY_FLAP = -5.5 * s;
+        this.FLAP_POWER_MIN = -5 * s;
+        this.FLAP_POWER_MAX = -10 * s;
+    },
+
+    toggleMode() {
+        const btn = document.getElementById('fbModeBtn');
+        const val = document.getElementById('fbModeVal');
+        if (this.mode === 'simple') {
+            this.mode = 'pro';
+            if (val) { val.innerText = 'Pro'; val.style.color = '#ff9800'; }
+            if (btn) { btn.innerText = 'Simple Mode'; btn.style.background = '#ff9800'; }
+        } else {
+            this.mode = 'simple';
+            if (val) { val.innerText = 'Simple'; val.style.color = '#4caf50'; }
+            if (btn) { btn.innerText = 'Pro Mode'; btn.style.background = '#4caf50'; }
+        }
+    },
+
+    start() {
+        this.running = true;
+        this.over = false;
+        this.score = 0;
+        this.pipes = [];
+        this.birdY = this.H / 2;
+        this.vel = 0;
+        this.lastFlap = 0;
+        this.isFlapping = false;
+        this.lastSpawn = Date.now();
+        document.getElementById('fbOverlay').classList.add('hidden');
+        document.getElementById('fbScore').innerText = '0';
+        this.spawnPipe();
+    },
+
+    end() {
+        this.running = false;
+        this.over = true;
+        if (this.score > this.highScore) {
+            this.highScore = this.score;
+            localStorage.setItem('fbHighScore', this.highScore);
+        }
+        document.getElementById('fbOverlayTitle').innerText = 'Game Over!';
+        document.getElementById('fbOverlayScore').innerText = `Score: ${this.score}  |  Best: ${this.highScore}`;
+        document.getElementById('fbStartBtn').innerText = 'Play Again';
+        document.getElementById('fbOverlay').classList.remove('hidden');
+    },
+
+    spawnPipe() {
+        const minY = this.PIPE_GAP / 2 + 40;
+        const maxY = this.H - this.PIPE_GAP / 2 - 40;
+        this.pipes.push({ x: this.W, gapY: Math.random() * (maxY - minY) + minY, scored: false });
+    },
+
+    handlePitch(newPitch) {
+        this.pitchVel = newPitch - this.lastPitch;
+        this.lastPitch = this.pitch;
+        this.pitch = newPitch;
+
+        const pv = document.getElementById('fbPitchVal');
+        if (pv) pv.innerText = this.pitch.toFixed(1) + '\u00B0';
+
+        const now = Date.now();
+
+        // Swing detection
+        if (!this.swingActive && this.pitchVel < -this.FLAP_VEL_THRESH) {
+            this.swingActive = true;
+            this.swingStartPitch = this.lastPitch;
+            this.swingStartTime = now;
+            this.swingRange = 0;
+        }
+
+        if (this.swingActive) {
+            this.swingRange = this.swingStartPitch - this.pitch;
+            const sv = document.getElementById('fbSwingVal');
+            if (sv) sv.innerText = this.swingRange.toFixed(1) + '\u00B0';
+
+            const progress = Math.min(1, this.swingRange / this.FLAP_RANGE_THRESH);
+            const fill = document.getElementById('fbBarFill');
+            if (fill) {
+                fill.style.width = (progress * 100) + '%';
+                fill.style.background = progress >= 1 ? '#4caf50' : '#00d4ff';
+            }
+
+            if (this.swingRange >= this.FLAP_RANGE_THRESH &&
+                now - this.lastFlap > this.FLAP_COOLDOWN && this.running) {
+                let power;
+                if (this.mode === 'simple') {
+                    power = this.KEY_FLAP;
+                    this.flapStrength = 0.7;
+                } else {
+                    const extra = this.swingRange - this.FLAP_RANGE_THRESH;
+                    power = Math.max(this.FLAP_POWER_MAX, this.FLAP_POWER_MIN - extra * this.FLAP_SENSITIVITY);
+                    this.flapStrength = Math.min(1, this.swingRange / 40);
+                }
+                this.vel = power;
+                this.lastFlap = now;
+                this.isFlapping = true;
+                this.swingActive = false;
+                this.swingRange = 0;
+            }
+
+            if (now - this.swingStartTime > this.SWING_TIMEOUT) {
+                this.swingActive = false;
+                this.swingRange = 0;
+            }
+        } else {
+            const sv = document.getElementById('fbSwingVal');
+            if (sv) sv.innerText = this.pitchVel.toFixed(1) + '\u00B0/f';
+            const fill = document.getElementById('fbBarFill');
+            if (fill) { fill.style.width = '0%'; fill.style.background = '#00d4ff'; }
+        }
+    },
+
+    update() {
+        if (!this.running) return;
+        const now = Date.now();
+
+        if (now - this.lastSpawn > this.PIPE_INTERVAL) {
+            this.spawnPipe();
+            this.lastSpawn = now;
+        }
+
+        this.vel += this.GRAVITY;
+        if (this.vel > this.MAX_FALL) this.vel = this.MAX_FALL;
+        this.birdY += this.vel;
+
+        if (this.isFlapping && now - this.lastFlap > 100) this.isFlapping = false;
+
+        const birdX = this.W * this.BIRD_X_FRAC;
+        for (let i = this.pipes.length - 1; i >= 0; i--) {
+            const p = this.pipes[i];
+            p.x -= this.PIPE_SPEED;
+            if (!p.scored && p.x + this.PIPE_W < birdX) {
+                p.scored = true;
+                this.score++;
+                document.getElementById('fbScore').innerText = this.score;
+            }
+            if (p.x + this.PIPE_W < 0) { this.pipes.splice(i, 1); continue; }
+            if (this.checkCollision(p, birdX)) { this.end(); return; }
+        }
+
+        if (this.birdY <= this.BIRD_SIZE / 2 || this.birdY >= this.H - this.BIRD_SIZE / 2) {
+            this.end();
+        }
+    },
+
+    checkCollision(pipe, birdX) {
+        const half = this.BIRD_SIZE / 2;
+        const bl = birdX - half, br = birdX + half;
+        const bt = this.birdY - half, bb = this.birdY + half;
+        const pl = pipe.x, pr = pipe.x + this.PIPE_W;
+        const gt = pipe.gapY - this.PIPE_GAP / 2;
+        const gb = pipe.gapY + this.PIPE_GAP / 2;
+        if (br > pl && bl < pr) {
+            if (bt < gt || bb > gb) return true;
+        }
+        return false;
+    },
+
+    draw() {
+        const c = this.ctx, W = this.W, H = this.H;
+        if (!c) return;
+
+        // Background
+        const bg = c.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#0c1445');
+        bg.addColorStop(0.5, '#1a237e');
+        bg.addColorStop(1, '#283593');
+        c.fillStyle = bg;
+        c.fillRect(0, 0, W, H);
+
+        // Stars
+        c.fillStyle = 'rgba(255,255,255,0.3)';
+        this.stars.forEach(([fx, fy, r]) => {
+            c.beginPath();
+            c.arc(fx * W, fy * H, r, 0, Math.PI * 2);
+            c.fill();
+        });
+
+        // Pipes
+        this.pipes.forEach(p => {
+            const gt = p.gapY - this.PIPE_GAP / 2;
+            const gb = p.gapY + this.PIPE_GAP / 2;
+            const pg = c.createLinearGradient(p.x, 0, p.x + this.PIPE_W, 0);
+            pg.addColorStop(0, '#1b5e20'); pg.addColorStop(0.5, '#4caf50'); pg.addColorStop(1, '#1b5e20');
+            c.fillStyle = pg;
+            c.fillRect(p.x, 0, this.PIPE_W, gt);
+            c.fillRect(p.x, gb, this.PIPE_W, H - gb);
+            c.fillStyle = '#2e7d32';
+            c.fillRect(p.x - 4, gt - 20, this.PIPE_W + 8, 20);
+            c.fillRect(p.x - 4, gb, this.PIPE_W + 8, 20);
+        });
+
+        // Bird
+        const bx = W * this.BIRD_X_FRAC, by = this.birdY, sz = this.BIRD_SIZE;
+        const rot = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, this.vel * 0.05));
+        c.save();
+        c.translate(bx, by);
+        c.rotate(rot);
+        c.shadowColor = this.isFlapping ? '#ffff00' : '#ffd700';
+        c.shadowBlur = this.isFlapping ? 25 : 12;
+        c.fillStyle = '#ffd700';
+        c.beginPath(); c.arc(0, 0, sz / 2, 0, Math.PI * 2); c.fill();
+        c.shadowBlur = 0;
+        // Eye
+        c.fillStyle = '#fff';
+        c.beginPath(); c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#000';
+        c.beginPath(); c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2); c.fill();
+        // Beak
+        c.fillStyle = '#ff6600';
+        c.beginPath();
+        c.moveTo(sz / 2, 0); c.lineTo(sz / 2 + sz * 0.35, sz * 0.08);
+        c.lineTo(sz / 2, sz * 0.22); c.closePath(); c.fill();
+        // Wing
+        c.fillStyle = '#ffb300';
+        c.beginPath();
+        if (this.isFlapping) c.ellipse(-sz * 0.14, -sz * 0.22, sz * 0.4, sz * 0.28, -0.5, 0, Math.PI * 2);
+        else c.ellipse(-sz * 0.14, sz * 0.14, sz * 0.34, sz * 0.22, -0.3, 0, Math.PI * 2);
+        c.fill();
+        c.restore();
+
+        // Boundary lines
+        c.strokeStyle = '#00d4ff'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(0, 2); c.lineTo(W, 2); c.stroke();
+        c.beginPath(); c.moveTo(0, H - 2); c.lineTo(W, H - 2); c.stroke();
+    },
+
+    loop() {
+        // Only update & draw when the game tab is visible
+        if (currentImuMode === 'game') {
+            this.update();
+            this.draw();
+        }
+        requestAnimationFrame(() => this.loop());
+    }
+};
+
+function fbResizeCanvas() { fb.resize(); }
+function fbHandlePitch(deg) {
+    // Only process pitch when game tab is active
+    if (currentImuMode === 'game') fb.handlePitch(deg);
+}
+window.addEventListener('resize', fbResizeCanvas);
+fb.init();
