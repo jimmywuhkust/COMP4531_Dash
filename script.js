@@ -17,6 +17,15 @@ const LERP = 0.1;
 let targetY = 20; 
 let currentY = 20;
 
+// Step source selection
+let useDeviceStep = false;
+
+// CSV Recording
+let csvRows = [];
+let csvRecording = false;
+let csvStartTime = 0;
+let csvFilename = '';
+
 // --- HELPER: Fix 360-degree wrap-around glitch ---
 function lerpAngle(start, end, factor) {
     let diff = end - start;
@@ -54,6 +63,16 @@ function setImuMode(mode) {
         pedo.classList.remove('active');
         graphs.style.display = 'flex';
     }
+    // Recalculate 3D canvas size after layout change
+    setTimeout(resize3D, 50);
+}
+
+// Step source checkbox handler
+const stepSourceCheckbox = document.getElementById('useDeviceStep');
+if (stepSourceCheckbox) {
+    stepSourceCheckbox.addEventListener('change', (e) => {
+        useDeviceStep = e.target.checked;
+    });
 }
 
 // Button States
@@ -63,7 +82,14 @@ function toggleStream() {
     btn.innerText = "Streaming...";
     btn.classList.add('btn-streaming');
     // Reset Yaw on start so it centers
-    tYaw = 0; 
+    tYaw = 0;
+    // Start CSV recording
+    csvRows = [];
+    csvRecording = true;
+    csvStartTime = performance.now();
+    csvFilename = '';
+    const csvRow = document.getElementById('csvDownloadRow');
+    if (csvRow) csvRow.style.display = 'none';
 }
 
 function resetStreamBtn() {
@@ -72,6 +98,33 @@ function resetStreamBtn() {
         btn.innerText = "Start Stream";
         btn.classList.remove('btn-streaming');
     }
+    // Stop CSV recording and show download row if data exists
+    if (csvRecording && csvRows.length > 0) {
+        csvRecording = false;
+        const date = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        csvFilename = `imu_data_${date}.csv`;
+        const csvRow = document.getElementById('csvDownloadRow');
+        const csvNameEl = document.getElementById('csvFileName');
+        if (csvNameEl) csvNameEl.innerText = csvFilename;
+        if (csvRow) csvRow.style.display = 'flex';
+    } else {
+        csvRecording = false;
+    }
+}
+
+function downloadCSV() {
+    if (csvRows.length === 0) return;
+    const header = 'timestamp_ms,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,steps\n';
+    const body = csvRows.join('\n') + '\n';
+    const blob = new Blob([header + body], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = csvFilename || 'imu_data.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 // --- BLUETOOTH CORE ---
@@ -90,6 +143,7 @@ async function connect() {
             svc:   `${base}40-4150-b42d-22f30b0a0499`,
             data:  `${base}41-4150-b42d-22f30b0a0499`,
             ctrl:  `${base}42-4150-b42d-22f30b0a0499`,
+            step:  `${base}43-4150-b42d-22f30b0a0499`,
             audio: `${base}44-4150-b42d-22f30b0a0499`
         };
 
@@ -112,6 +166,12 @@ async function connect() {
         const imuChar = await service.getCharacteristic(UUIDS.data);
         await imuChar.startNotifications();
         imuChar.addEventListener('characteristicvaluechanged', handleIMU);
+
+        try {
+            const stepChar = await service.getCharacteristic(UUIDS.step);
+            await stepChar.startNotifications();
+            stepChar.addEventListener('characteristicvaluechanged', handleStepData);
+        } catch (e) { log("Step characteristic unavailable"); }
 
         try {
             const ac = await service.getCharacteristic(UUIDS.audio);
@@ -152,8 +212,9 @@ function onDisconnect() {
     document.getElementById('statusDot').classList.remove('active');
     document.getElementById('conBtn').disabled = false;
     document.getElementById('disBtn').disabled = true;
-    targetY = 20; 
-    resetStreamBtn(); 
+    targetY = 20;
+    resetStreamBtn();
+    updateStepDisplay(0);
     log("Disconnected");
 }
 
@@ -167,6 +228,23 @@ async function send(cmd) {
 }
 
 // --- HANDLERS ---
+function updateStepDisplay(steps) {
+    const stepBigEl = document.getElementById('stepBig');
+    const stepSideEl = document.getElementById('stepSide');
+    const ringVal = document.querySelector('.ring-val');
+    if (stepBigEl) stepBigEl.innerText = steps;
+    if (stepSideEl) stepSideEl.innerText = steps;
+    if (ringVal) ringVal.style.strokeDashoffset = 690 - (steps % 100) * 6.9;
+}
+
+function handleStepData(e) {
+    if (!useDeviceStep) return;
+    const v = e.target.value;
+    if (v.byteLength < 2) return;
+    const steps = v.getUint16(0, true);
+    updateStepDisplay(steps);
+}
+
 function handleControlData(e) {
     const msg = new TextDecoder().decode(e.target.value);
     if (msg.startsWith("LORA:")) {
@@ -277,6 +355,14 @@ function handleIMU(e) {
     const dt = (now - lastTime) / 1000; // Seconds
     lastTime = now;
 
+    // --- CSV Recording ---
+    if (csvRecording) {
+        const ts = (now - csvStartTime).toFixed(2);
+        const stepEl = document.getElementById('stepBig');
+        const steps = stepEl ? stepEl.innerText : '0';
+        csvRows.push(`${ts},${ax.toFixed(4)},${ay.toFixed(4)},${az.toFixed(4)},${gx.toFixed(4)},${gy.toFixed(4)},${gz.toFixed(4)},${steps}`);
+    }
+
     // --- 3. Update Text ---
     document.getElementById('accVal').innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
     document.getElementById('gyroVal').innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
@@ -298,13 +384,14 @@ function handleIMU(e) {
     // We subtract because 3D engines often have inverted Y rotation
     tYaw -= gyroRad * dt; 
 
-    // --- 6. Step Counter ---
-    if(Math.sqrt(ax*ax + ay*ay + az*az) > 15) {
-        const el = document.getElementById('stepBig');
-        let s = parseInt(el.innerText) + 1;
-        el.innerText = s;
-        document.getElementById('stepSide').innerText = s;
-        document.querySelector('.ring-val').style.strokeDashoffset = 690 - (s % 100) * 6.9;
+    // Local step estimation (used when device pedometer is not selected)
+    if (!useDeviceStep) {
+        const magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
+        if (magnitude > 15) {
+            const stepBigEl = document.getElementById('stepBig');
+            const current = stepBigEl ? parseInt(stepBigEl.innerText || '0', 10) || 0 : 0;
+            updateStepDisplay(current + 1);
+        }
     }
 }
 

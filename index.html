@@ -100,6 +100,14 @@
                     <button id="startBtn" class="btn-secondary small" onclick="toggleStream()">Start Stream</button>
                     <button class="btn-secondary small" onclick="send('STOP'); resetStreamBtn();">Stop</button>
                 </div>
+                <div id="csvDownloadRow" class="csv-download-row" style="display:none;">
+                    <span id="csvFileName" class="csv-filename"></span>
+                    <button class="btn-csv-dl" onclick="downloadCSV()" title="Download CSV">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                        </svg>
+                    </button>
+                </div>
 
                 <div class="toggle-row">
                     <label class="ios-switch">
@@ -145,6 +153,11 @@
                         </div>
                     </div>
                     <div class="pedometer-meta">Live Sensor Data</div>
+                    <label class="step-source-toggle">
+                        <input type="checkbox" id="useDeviceStep">
+                        <span>Use device pedometer (BLE)</span>
+                    </label>
+                    <div class="step-char-label">When unchecked, steps are estimated locally from IMU.</div>
                 </div>
             </main>
         </section>

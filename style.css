@@ -238,11 +238,12 @@ input:focus {
 .imu-main {
     flex: 1; position: relative; 
     border-radius: var(--radius-l);
-    background: white; /* Clean background for 3D */
+    background: white;
     box-shadow: var(--shadow-soft);
     overflow: hidden;
     margin-bottom: 24px; margin-right: 24px;
     border: 1px solid white;
+    display: flex; flex-direction: column;
 }
 
 .sub-nav { 
@@ -274,7 +275,28 @@ input:focus {
 .sensor-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
 .sensor-label { color: var(--text-secondary); font-weight: 700; }
 
-.control-actions { display: flex; gap: 10px; margin-bottom: 24px; }
+.control-actions { display: flex; gap: 10px; margin-bottom: 12px; }
+.csv-download-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 16px; padding: 6px 10px;
+    background: rgba(0, 113, 227, 0.06);
+    border-radius: 10px;
+    border: 1px solid rgba(0, 113, 227, 0.12);
+}
+.csv-filename {
+    flex: 1; min-width: 0;
+    font-size: 10px; font-family: 'JetBrains Mono', monospace;
+    color: var(--primary); font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.btn-csv-dl {
+    flex-shrink: 0; width: 28px; height: 28px;
+    border: none; border-radius: 8px; cursor: pointer;
+    background: var(--primary); color: white;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; transition: 0.2s;
+}
+.btn-csv-dl:hover { transform: scale(1.08); }
 .toggle-row { display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 500; }
 
 /* iOS Switch */
@@ -286,23 +308,27 @@ input:checked + .slider { background-color: var(--success); }
 input:checked + .slider:before { transform: translateX(18px); }
 
 /* --- IMU CONTENT & GRAPHS --- */
-#imu-content { width: 100%; height: 100%; }
+#imu-content { width: 100%; flex: 1; min-height: 0; }
 #graph-layer { 
-    position: absolute; bottom: 20px; right: 20px; width: 600px; /* Matches your JS resize */
-    display: flex; flex-direction: column; gap: 12px; pointer-events: none; 
+    flex-shrink: 0;
+    display: flex; flex-direction: row; gap: 8px;
+    padding: 8px;
+    background: rgba(245,245,247,0.6);
+    border-top: 1px solid rgba(0,0,0,0.04);
 }
 .graph-card { 
+    flex: 1; min-width: 0;
     background: rgba(255,255,255,0.85); backdrop-filter: blur(20px);
-    border-radius: 16px; padding: 16px; 
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    border-radius: 12px; padding: 10px; 
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
     border: 1px solid rgba(255,255,255,0.5);
 }
 .graph-header { 
     display: flex; justify-content: space-between; 
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--text-secondary); font-weight: 700; margin-bottom: 10px; 
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-secondary); font-weight: 700; margin-bottom: 6px; 
 }
-canvas { width: 100%; height: 150px; border-radius: 8px; background: #f9f9fa; }
+canvas { width: 100%; height: 200px; border-radius: 6px; background: #f9f9fa; }
 .legend { display: flex; gap: 12px; }
 .legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 .x { background: #ff3b30; } .y { background: #34c759; } .z { background: #007aff; }
@@ -325,6 +351,19 @@ canvas { width: 100%; height: 150px; border-radius: 8px; background: #f9f9fa; }
 .step-big { font-size: 72px; font-weight: 800; color: #1d1d1f; letter-spacing: -2px; line-height: 1; }
 .step-label { color: #fa2d48; font-weight: 700; letter-spacing: 2px; font-size: 14px; margin-top: 10px; }
 .pedometer-meta { margin-top: 30px; color: var(--text-secondary); font-size: 14px; font-weight: 500; background: #f2f2f7; padding: 8px 16px; border-radius: 100px; }
+.step-char-label { margin-top: 12px; font-size: 12px; color: var(--text-secondary); opacity: 0.85; }
+.step-source-toggle {
+    margin-top: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.step-source-toggle input {
+    width: 16px;
+    height: 16px;
+}
 
 /* --- LORA CHAT --- */
 .chat-card { 
