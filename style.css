@@ -352,6 +352,77 @@ canvas { width: 100%; height: 200px; border-radius: 6px; background: #f9f9fa; }
 .step-label { color: #fa2d48; font-weight: 700; letter-spacing: 2px; font-size: 14px; margin-top: 10px; }
 .pedometer-meta { margin-top: 30px; color: var(--text-secondary); font-size: 14px; font-weight: 500; background: #f2f2f7; padding: 8px 16px; border-radius: 100px; }
 .step-char-label { margin-top: 12px; font-size: 12px; color: var(--text-secondary); opacity: 0.85; }
+
+/* --- FLAPPY BIRD GAME --- */
+#game-view {
+    display: none; position: absolute; inset: 0;
+    background: linear-gradient(to bottom, #0c1445 0%, #1a237e 50%, #283593 100%);
+    z-index: 10; border-radius: var(--radius-l); overflow: hidden;
+}
+#game-view.active { display: block; }
+#game-view canvas {
+    width: 100%; height: 100%;
+    display: block; background: transparent;
+    border-radius: 0;
+}
+#fbStatus {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,0.6); padding: 10px 14px;
+    border-radius: 10px; font-size: 12px; z-index: 5;
+    color: #ccc; backdrop-filter: blur(8px);
+}
+.fb-status-row { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0; }
+.fb-lbl { color: #888; }
+.fb-val { color: #00d4ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.fb-mode-btn {
+    margin-top: 6px; width: 100%; padding: 5px; border: none;
+    border-radius: 6px; font-size: 11px; font-weight: 600;
+    background: #4caf50; color: white; cursor: pointer;
+    transition: 0.2s;
+}
+.fb-mode-btn:hover { filter: brightness(1.1); }
+#fbScore {
+    position: absolute; top: 10px; right: 10px;
+    background: rgba(0,0,0,0.6); padding: 10px 20px;
+    border-radius: 10px; font-size: 28px; font-weight: 800;
+    color: white; z-index: 5; font-family: 'JetBrains Mono', monospace;
+    backdrop-filter: blur(8px);
+}
+#fbSwingBar {
+    position: absolute; bottom: 10px; left: 10px;
+    background: rgba(0,0,0,0.6); padding: 8px 12px;
+    border-radius: 10px; z-index: 5; backdrop-filter: blur(8px);
+}
+.fb-bar-track {
+    width: 120px; height: 8px; background: #333;
+    border-radius: 4px; overflow: hidden;
+}
+.fb-bar-fill {
+    height: 100%; width: 0%; border-radius: 4px;
+    background: #00d4ff; transition: width 0.1s, background 0.2s;
+}
+#fbOverlay {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 15; backdrop-filter: blur(6px);
+    border-radius: var(--radius-l);
+}
+#fbOverlay.hidden { display: none; }
+.fb-overlay-title {
+    font-size: 32px; font-weight: 800; color: #00d4ff;
+    margin-bottom: 12px; text-shadow: 0 0 20px rgba(0,212,255,0.5);
+}
+.fb-overlay-score { font-size: 18px; color: #fff; margin-bottom: 20px; }
+.fb-overlay-hint { font-size: 14px; color: #aaa; margin-bottom: 6px; }
+.fb-start-btn {
+    margin-top: 16px; padding: 12px 36px; border: none;
+    border-radius: 12px; font-size: 16px; font-weight: 700;
+    background: linear-gradient(135deg, #00d4ff, #0099cc);
+    color: #000; cursor: pointer; transition: 0.2s;
+}
+.fb-start-btn:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(0,212,255,0.5); }
 .step-source-toggle {
     margin-top: 12px;
     display: inline-flex;

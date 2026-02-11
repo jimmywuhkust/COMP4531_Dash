@@ -67,6 +67,7 @@
                     <div class="sub-nav">
                         <button class="sub-btn active" onclick="setImuMode('3d')">3D View</button>
                         <button class="sub-btn" onclick="setImuMode('steps')">Fitness</button>
+                        <button class="sub-btn" onclick="setImuMode('game')">Game</button>
                     </div>
                 </div>
 
@@ -158,6 +159,27 @@
                         <span>Use device pedometer (BLE)</span>
                     </label>
                     <div class="step-char-label">When unchecked, steps are estimated locally from IMU.</div>
+                </div>
+
+                <div id="game-view">
+                    <canvas id="fbCanvas"></canvas>
+                    <div id="fbStatus">
+                        <div class="fb-status-row"><span class="fb-lbl">Mode:</span><span class="fb-val" id="fbModeVal">Simple</span></div>
+                        <div class="fb-status-row"><span class="fb-lbl">Pitch:</span><span class="fb-val" id="fbPitchVal">0.0&deg;</span></div>
+                        <div class="fb-status-row"><span class="fb-lbl">Swing:</span><span class="fb-val" id="fbSwingVal">0.0&deg;</span></div>
+                        <button id="fbModeBtn" class="fb-mode-btn">Pro Mode</button>
+                    </div>
+                    <div id="fbScore">0</div>
+                    <div id="fbSwingBar">
+                        <div class="fb-bar-track"><div class="fb-bar-fill" id="fbBarFill"></div></div>
+                    </div>
+                    <div id="fbOverlay">
+                        <div class="fb-overlay-title" id="fbOverlayTitle">IMU Flappy Bird</div>
+                        <div class="fb-overlay-score" id="fbOverlayScore"></div>
+                        <div class="fb-overlay-hint">Swing your sensor downward to flap!</div>
+                        <div class="fb-overlay-hint" style="opacity:0.5">Or press Space / Arrow Up</div>
+                        <button class="fb-start-btn" id="fbStartBtn">Start Game</button>
+                    </div>
                 </div>
             </main>
         </section>
