@@ -1,4 +1,6 @@
-// --- GLOBAL VARIABLES ---
+// =============================================
+// GLOBAL VARIABLES
+// =============================================
 let device, server, service, ctrlChar;
 let isRec = false, audioChunks = [];
 let ppsCount = 0;
@@ -14,7 +16,7 @@ let tPitch = 0, tRoll = 0, tYaw = 0;
 const LERP = 0.1;
 
 // 3D Animation Vars
-let targetY = 20; 
+let targetY = 20;
 let currentY = 20;
 
 // Step source selection
@@ -38,9 +40,12 @@ function lerpAngle(start, end, factor) {
     return start + (diff * factor);
 }
 
-// --- UI LOGIC ---
+// =============================================
+// UI & LOGGING
+// =============================================
 function log(msg) {
     const t = document.getElementById('terminal');
+    if (!t) return;
     const time = new Date().toLocaleTimeString().split(' ')[0];
     t.innerHTML += `<div><span style="opacity:0.5">[${time}]</span> ${msg}</div>`;
     t.scrollTop = t.scrollHeight;
@@ -49,51 +54,62 @@ function log(msg) {
 function setTab(id) {
     document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('view-' + id).classList.add('active');
-    document.querySelector(`button[onclick="setTab('${id}')"]`).classList.add('active');
-    if (id === 'imu') resize3D();
+    
+    const targetView = document.getElementById('view-' + id);
+    if (targetView) targetView.classList.add('active');
+    
+    const btn = document.querySelector(`button[onclick="setTab('${id}')"]`);
+    if (btn) btn.classList.add('active');
+
+    // If switching away from IMU tab, stop 3D resizing
+    if (id === 'imu') {
+        resize3D();
+    }
 }
 
 function setImuMode(mode) {
     currentImuMode = mode;
     document.querySelectorAll('.sub-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`button[onclick="setImuMode('${mode}')"]`).classList.add('active');
+    
+    const activeBtn = document.querySelector(`button[onclick="setImuMode('${mode}')"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+
     const pedo = document.getElementById('pedometer-view');
     const graphs = document.getElementById('graph-layer');
     const gameView = document.getElementById('game-view');
     const imuContent = document.getElementById('imu-content');
-    pedo.classList.remove('active');
-    if (gameView) gameView.classList.remove('active');
-    graphs.style.display = 'none';
-    imuContent.style.display = 'block';
 
+    // Hide everything first
+    if (pedo) pedo.classList.remove('active');
+    if (gameView) gameView.classList.remove('active');
+    if (graphs) graphs.style.display = 'none';
+    if (imuContent) imuContent.style.display = 'block'; // Default to show 3D container
+
+    // Show only what is needed
     if (mode === 'steps') {
-        pedo.classList.add('active');
+        if (pedo) pedo.classList.add('active');
+        if (imuContent) imuContent.style.display = 'none'; // Hide 3D in steps mode
     } else if (mode === 'game') {
         if (gameView) gameView.classList.add('active');
-        imuContent.style.display = 'none';
-        fbResizeCanvas();
+        if (imuContent) imuContent.style.display = 'none'; // Hide 3D in game mode
+        fbResizeCanvas(); // Ensure game canvas is sized right
     } else {
-        graphs.style.display = 'flex';
+        // 3D Mode
+        if (graphs) graphs.style.display = 'flex';
+        setTimeout(resize3D, 50);
     }
-    // Recalculate 3D canvas size after layout change
-    if (mode === '3d') setTimeout(resize3D, 50);
 }
 
-// Step source checkbox handler
-const stepSourceCheckbox = document.getElementById('useDeviceStep');
-if (stepSourceCheckbox) {
-    stepSourceCheckbox.addEventListener('change', (e) => {
-        useDeviceStep = e.target.checked;
-    });
-}
-
-// Button States
+// =============================================
+// CSV & RECORDING
+// =============================================
 function toggleStream() {
     const btn = document.getElementById('startBtn');
     send('START');
-    btn.innerText = "Streaming...";
-    btn.classList.add('btn-streaming');
+    if (btn) {
+        btn.innerText = "Streaming...";
+        btn.classList.add('btn-streaming');
+    }
     // Reset Yaw on start so it centers
     tYaw = 0;
     // Start CSV recording
@@ -140,10 +156,13 @@ function downloadCSV() {
     URL.revokeObjectURL(url);
 }
 
-// --- BLUETOOTH CORE ---
+// =============================================
+// BLUETOOTH CORE
+// =============================================
 async function connect() {
     try {
-        const gid = parseInt(document.getElementById('gid').value);
+        const gidVal = document.getElementById('gid').value;
+        const gid = parseInt(gidVal);
         const hex = gid.toString(16).padStart(2, '0');
         const base = `13172b58-${hex}`;
         
@@ -205,7 +224,8 @@ async function connect() {
         if(board3d) board3d.position.y = 15; 
 
         setInterval(() => {
-            document.getElementById('pps').innerText = `${ppsCount} PPS`;
+            const ppsEl = document.getElementById('pps');
+            if (ppsEl) ppsEl.innerText = `${ppsCount} PPS`;
             ppsCount = 0;
         }, 1000);
 
@@ -240,7 +260,9 @@ async function send(cmd) {
     } catch (e) { log("Tx Error: " + e); }
 }
 
-// --- HANDLERS ---
+// =============================================
+// DATA HANDLERS (OPTIMIZED)
+// =============================================
 function updateStepDisplay(steps) {
     const stepBigEl = document.getElementById('stepBig');
     const stepSideEl = document.getElementById('stepSide');
@@ -267,6 +289,7 @@ function handleControlData(e) {
 
 function addChatBubble(txt, type) {
     const box = document.getElementById('loraChat');
+    if(!box) return;
     if(box.querySelector('.chat-placeholder')) box.innerHTML = '';
     const div = document.createElement('div');
     div.className = `msg ${type}`;
@@ -277,7 +300,7 @@ function addChatBubble(txt, type) {
 
 async function sendLoRa() {
     const input = document.getElementById('loraTxt');
-    if (input.value) {
+    if (input && input.value) {
         await send("SEND_LORA:" + input.value);
         addChatBubble(input.value, 'out');
         input.value = "";
@@ -286,7 +309,8 @@ async function sendLoRa() {
 
 async function recordAudio() {
     audioChunks = []; isRec = true;
-    document.getElementById('recBtn').disabled = true;
+    const recBtn = document.getElementById('recBtn');
+    if (recBtn) recBtn.disabled = true;
     document.getElementById('audioStatus').innerText = "Recording...";
     await send("REC_AUDIO");
     setTimeout(() => {
@@ -299,7 +323,8 @@ function handleAudio(e) {
     const d = new Uint8Array(e.target.value.buffer);
     if (d.length === 0) {
         isRec = false;
-        document.getElementById('recBtn').disabled = false;
+        const recBtn = document.getElementById('recBtn');
+        if (recBtn) recBtn.disabled = false;
         document.getElementById('audioStatus').innerText = "Playing...";
         playAudio();
         return;
@@ -320,6 +345,7 @@ function playAudio() {
 
 function drawWaveform(data) {
     const c = document.getElementById('audioCanvas');
+    if (!c) return;
     const cx = c.getContext('2d');
     const w = c.width = c.clientWidth;
     const h = c.height = c.clientHeight;
@@ -333,13 +359,12 @@ function drawWaveform(data) {
     cx.stroke();
 }
 
-let streamTimeout; // Global or outer scope variable
+let streamTimeout; 
 
 function handleIMU(e) {
     const v = e.target.value;
     if (v.byteLength < 24) return;
 
-    // --- 1. Parse Data (always needed) ---
     const ax = v.getFloat32(0, true);
     const ay = v.getFloat32(4, true);
     const az = v.getFloat32(8, true);
@@ -347,31 +372,33 @@ function handleIMU(e) {
     const gy = v.getFloat32(16, true);
     const gz = v.getFloat32(20, true);
 
-    // --- GAME MODE: minimal path, skip everything else ---
-    if (currentImuMode === 'game') {
-        const imuPitchDeg = Math.atan2(-ax, Math.sqrt(ay * ay + az * az)) * (180 / Math.PI);
-        fbHandlePitch(imuPitchDeg);
-        return;
-    }
-
-    // --- Normal mode processing below ---
     ppsCount++;
 
-    const now = performance.now();
-    const dt = (now - lastTime) / 1000;
-    lastTime = now;
-
-    // AUTO-TOGGLE UI ON
+    // Watchdog to auto-reset button if stream stops
     const btn = document.getElementById('startBtn');
     if (btn && btn.innerText !== "Streaming...") {
         btn.innerText = "Streaming...";
         btn.classList.add('btn-streaming');
         targetY = 0; 
     }
-
-    // WATCHDOG
     clearTimeout(streamTimeout);
     streamTimeout = setTimeout(() => { resetStreamBtn(); }, 1000);
+
+    // --- GAME MODE (OPTIMIZATION) ---
+    // If we are in Game Mode, ONLY calculate pitch and return immediately.
+    // This prevents the 3D Math from running in the background.
+    if (currentImuMode === 'game') {
+        const imuPitchDeg = Math.atan2(-ax, Math.sqrt(ay * ay + az * az)) * (180 / Math.PI);
+        fbHandlePitch(imuPitchDeg);
+        return; 
+    }
+
+    // --- 3D / NORMAL MODE ---
+    // If we are here, we are NOT in game mode. Proceed with normal logic.
+    
+    const now = performance.now();
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
 
     // CSV Recording
     if (csvRecording) {
@@ -381,21 +408,23 @@ function handleIMU(e) {
         csvRows.push(`${ts},${ax.toFixed(4)},${ay.toFixed(4)},${az.toFixed(4)},${gx.toFixed(4)},${gy.toFixed(4)},${gz.toFixed(4)},${steps}`);
     }
 
-    // Update Text
-    document.getElementById('accVal').innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
-    document.getElementById('gyroVal').innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
+    // Update Text UI
+    const accValEl = document.getElementById('accVal');
+    const gyroValEl = document.getElementById('gyroVal');
+    if (accValEl) accValEl.innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
+    if (gyroValEl) gyroValEl.innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
 
-    // Update Graphs
+    // Update Graphs Arrays
     accHist.push([ax, ay, az]); accHist.shift();
     gyroHist.push([gx, gy, gz]); gyroHist.shift();
 
-    // 3D Orientation
+    // 3D Orientation Math
     tPitch = -Math.atan2(-ax, Math.sqrt(ay * ay + az * az));
     tRoll = -Math.atan2(ay, az);
     const gyroRad = gz * (Math.PI / 180);
     tYaw -= gyroRad * dt; 
 
-    // Local step estimation
+    // Local Step Counter Logic
     if (!useDeviceStep) {
         const magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
         if (magnitude > 15) {
@@ -406,16 +435,18 @@ function handleIMU(e) {
     }
 }
 
-// --- 3D SCENE ---
+// =============================================
+// 3D SCENE (THREE.JS)
+// =============================================
 let scene, camera, renderer, board3d;
-const accCv = document.getElementById('accCanvas');
-const gyrCv = document.getElementById('gyroCanvas');
 
 function init3D() {
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     const container = document.getElementById('imu-content');
+    if (!container) return;
+
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
 
@@ -424,13 +455,14 @@ function init3D() {
     scene.add(board3d);
 
     const loader = new THREE.GLTFLoader();
+    // Ensure 'XIAO-nRF52840.glb' is in the SAME folder as this script
     loader.load('XIAO-nRF52840.glb', function (gltf) {
         const model = gltf.scene;
         model.scale.set(120, 120, 120);
-        // Correct internal rotation of the model
         model.rotation.set(Math.PI / 2, 0, Math.PI / 2);
         board3d.add(model);
     }, undefined, function () {
+        // Fallback box if model fails to load
         const geo = new THREE.BoxGeometry(3.5, 0.2, 2);
         const mat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
         board3d.add(new THREE.Mesh(geo, mat));
@@ -451,6 +483,7 @@ function init3D() {
 }
 
 function drawGraph(cv, data, scale) {
+    if (!cv) return;
     const cx = cv.getContext('2d');
     const w = cv.width = cv.clientWidth;
     const h = cv.height = cv.clientHeight;
@@ -473,17 +506,16 @@ function drawGraph(cv, data, scale) {
 function animate() {
     requestAnimationFrame(animate);
 
-    // Skip heavy 3D rendering when not on the 3D view tab
-    const imuTabActive = document.getElementById('view-imu').classList.contains('active');
-    if (!imuTabActive || currentImuMode !== '3d') return;
+    // OPTIMIZATION: If not in 3D mode, do NOT render the scene.
+    // This saves massive CPU/GPU resources when playing the game.
+    if (currentImuMode !== '3d') return;
 
     if (board3d) {
-        // Fly-In Animation
         currentY += (targetY - currentY) * 0.05; 
         board3d.position.y = currentY;
 
-        // Rotation Smoothing with Glitch Fix
-        const smooth = document.getElementById('smoothCheck').checked;
+        const smoothCheck = document.getElementById('smoothCheck');
+        const smooth = smoothCheck ? smoothCheck.checked : true;
         if (smooth) {
             board3d.rotation.x = lerpAngle(board3d.rotation.x, tPitch, LERP);
             board3d.rotation.z = lerpAngle(board3d.rotation.z, tRoll, LERP);
@@ -494,15 +526,16 @@ function animate() {
             board3d.rotation.y = tYaw;
         }
         
-        // Gentle Float (Idle)
         if(targetY === 0) {
              board3d.position.y += Math.sin(Date.now() * 0.002) * 0.05;
         }
     }
 
     renderer.render(scene, camera);
-    drawGraph(accCv, accHist, 5);
-    drawGraph(gyrCv, gyroHist, 5.0);
+    const accCv = document.getElementById('accCanvas');
+    const gyrCv = document.getElementById('gyroCanvas');
+    if (accCv) drawGraph(accCv, accHist, 5);
+    if (gyrCv) drawGraph(gyrCv, gyroHist, 5.0);
 }
 
 function resize3D() {
@@ -513,8 +546,6 @@ function resize3D() {
         camera.updateProjectionMatrix();
     }
 }
-window.addEventListener('resize', resize3D);
-init3D();
 
 // =============================================
 // FLAPPY BIRD GAME (IMU-controlled)
@@ -523,7 +554,6 @@ const fb = {
     canvas: null, ctx: null,
     W: 800, H: 500,
 
-    // Config (scaled relative to H)
     BIRD_SIZE: 28,
     BIRD_X_FRAC: 0.18,
     PIPE_W: 55,
@@ -534,7 +564,6 @@ const fb = {
     MAX_FALL: 5.5,
     KEY_FLAP: -5.5,
 
-    // Flap detection
     FLAP_VEL_THRESH: 4,
     FLAP_RANGE_THRESH: 15,
     FLAP_POWER_MIN: -5,
@@ -543,7 +572,6 @@ const fb = {
     FLAP_COOLDOWN: 120,
     SWING_TIMEOUT: 300,
 
-    // State
     running: false, over: false,
     score: 0, highScore: 0,
     birdY: 0, vel: 0,
@@ -551,11 +579,8 @@ const fb = {
     isFlapping: false, flapStrength: 0,
     mode: 'simple',
 
-    // Pitch tracking
     pitch: 0, lastPitch: 0, pitchVel: 0,
     swingActive: false, swingStartPitch: 0, swingStartTime: 0, swingRange: 0,
-
-    // Stars (pre-generated)
     stars: [],
 
     init() {
@@ -563,20 +588,21 @@ const fb = {
         if (!this.canvas) return;
         this.ctx = this.canvas.getContext('2d');
 
-        // Generate stars once
         for (let i = 0; i < 40; i++) {
             this.stars.push([Math.random(), Math.random(), 0.5 + Math.random() * 1.5]);
         }
 
-        document.getElementById('fbStartBtn').addEventListener('click', () => fb.start());
-        document.getElementById('fbModeBtn').addEventListener('click', () => fb.toggleMode());
+        const startBtn = document.getElementById('fbStartBtn');
+        const modeBtn = document.getElementById('fbModeBtn');
+        if (startBtn) startBtn.addEventListener('click', () => fb.start());
+        if (modeBtn) modeBtn.addEventListener('click', () => fb.toggleMode());
 
-        // Keyboard fallback
         document.addEventListener('keydown', (e) => {
+            const gv = document.getElementById('game-view');
+            // Only handle keys if Game Tab is active
+            if (!gv || !gv.classList.contains('active')) return;
+            
             if (e.key === ' ' || e.key === 'ArrowUp') {
-                // Only handle if game tab is active
-                const gv = document.getElementById('game-view');
-                if (!gv || !gv.classList.contains('active')) return;
                 if (this.running) {
                     const now = Date.now();
                     if (now - this.lastFlap > this.FLAP_COOLDOWN) {
@@ -591,14 +617,11 @@ const fb = {
                 e.preventDefault();
             }
             if (e.key === 'Enter') {
-                const gv = document.getElementById('game-view');
-                if (!gv || !gv.classList.contains('active')) return;
                 if (!this.running) this.start();
                 e.preventDefault();
             }
         });
 
-        // Load high score
         const saved = localStorage.getItem('fbHighScore');
         if (saved) this.highScore = parseInt(saved) || 0;
 
@@ -614,7 +637,6 @@ const fb = {
         this.H = cont.clientHeight || 500;
         this.canvas.width = this.W;
         this.canvas.height = this.H;
-        // Scale game params relative to height
         const s = this.H / 500;
         this.BIRD_SIZE = Math.round(28 * s);
         this.PIPE_GAP = Math.round(190 * s);
@@ -651,7 +673,8 @@ const fb = {
         this.lastFlap = 0;
         this.isFlapping = false;
         this.lastSpawn = Date.now();
-        document.getElementById('fbOverlay').classList.add('hidden');
+        const overlay = document.getElementById('fbOverlay');
+        if (overlay) overlay.classList.add('hidden');
         document.getElementById('fbScore').innerText = '0';
         this.spawnPipe();
     },
@@ -666,7 +689,8 @@ const fb = {
         document.getElementById('fbOverlayTitle').innerText = 'Game Over!';
         document.getElementById('fbOverlayScore').innerText = `Score: ${this.score}  |  Best: ${this.highScore}`;
         document.getElementById('fbStartBtn').innerText = 'Play Again';
-        document.getElementById('fbOverlay').classList.remove('hidden');
+        const overlay = document.getElementById('fbOverlay');
+        if (overlay) overlay.classList.remove('hidden');
     },
 
     spawnPipe() {
@@ -684,8 +708,6 @@ const fb = {
         if (pv) pv.innerText = this.pitch.toFixed(1) + '\u00B0';
 
         const now = Date.now();
-
-        // Swing detection
         if (!this.swingActive && this.pitchVel < -this.FLAP_VEL_THRESH) {
             this.swingActive = true;
             this.swingStartPitch = this.lastPitch;
@@ -738,18 +760,14 @@ const fb = {
     update() {
         if (!this.running) return;
         const now = Date.now();
-
         if (now - this.lastSpawn > this.PIPE_INTERVAL) {
             this.spawnPipe();
             this.lastSpawn = now;
         }
-
         this.vel += this.GRAVITY;
         if (this.vel > this.MAX_FALL) this.vel = this.MAX_FALL;
         this.birdY += this.vel;
-
         if (this.isFlapping && now - this.lastFlap > 100) this.isFlapping = false;
-
         const birdX = this.W * this.BIRD_X_FRAC;
         for (let i = this.pipes.length - 1; i >= 0; i--) {
             const p = this.pipes[i];
@@ -762,7 +780,6 @@ const fb = {
             if (p.x + this.PIPE_W < 0) { this.pipes.splice(i, 1); continue; }
             if (this.checkCollision(p, birdX)) { this.end(); return; }
         }
-
         if (this.birdY <= this.BIRD_SIZE / 2 || this.birdY >= this.H - this.BIRD_SIZE / 2) {
             this.end();
         }
@@ -775,33 +792,19 @@ const fb = {
         const pl = pipe.x, pr = pipe.x + this.PIPE_W;
         const gt = pipe.gapY - this.PIPE_GAP / 2;
         const gb = pipe.gapY + this.PIPE_GAP / 2;
-        if (br > pl && bl < pr) {
-            if (bt < gt || bb > gb) return true;
-        }
-        return false;
+        return (br > pl && bl < pr && (bt < gt || bb > gb));
     },
 
     draw() {
         const c = this.ctx, W = this.W, H = this.H;
         if (!c) return;
-
-        // Background
         const bg = c.createLinearGradient(0, 0, 0, H);
-        bg.addColorStop(0, '#0c1445');
-        bg.addColorStop(0.5, '#1a237e');
-        bg.addColorStop(1, '#283593');
-        c.fillStyle = bg;
-        c.fillRect(0, 0, W, H);
-
-        // Stars
+        bg.addColorStop(0, '#0c1445'); bg.addColorStop(0.5, '#1a237e'); bg.addColorStop(1, '#283593');
+        c.fillStyle = bg; c.fillRect(0, 0, W, H);
         c.fillStyle = 'rgba(255,255,255,0.3)';
         this.stars.forEach(([fx, fy, r]) => {
-            c.beginPath();
-            c.arc(fx * W, fy * H, r, 0, Math.PI * 2);
-            c.fill();
+            c.beginPath(); c.arc(fx * W, fy * H, r, 0, Math.PI * 2); c.fill();
         });
-
-        // Pipes
         this.pipes.forEach(p => {
             const gt = p.gapY - this.PIPE_GAP / 2;
             const gb = p.gapY + this.PIPE_GAP / 2;
@@ -814,56 +817,66 @@ const fb = {
             c.fillRect(p.x - 4, gt - 20, this.PIPE_W + 8, 20);
             c.fillRect(p.x - 4, gb, this.PIPE_W + 8, 20);
         });
-
-        // Bird
         const bx = W * this.BIRD_X_FRAC, by = this.birdY, sz = this.BIRD_SIZE;
         const rot = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, this.vel * 0.05));
         c.save();
-        c.translate(bx, by);
-        c.rotate(rot);
+        c.translate(bx, by); c.rotate(rot);
         c.shadowColor = this.isFlapping ? '#ffff00' : '#ffd700';
         c.shadowBlur = this.isFlapping ? 25 : 12;
         c.fillStyle = '#ffd700';
         c.beginPath(); c.arc(0, 0, sz / 2, 0, Math.PI * 2); c.fill();
         c.shadowBlur = 0;
-        // Eye
-        c.fillStyle = '#fff';
-        c.beginPath(); c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2); c.fill();
-        c.fillStyle = '#000';
-        c.beginPath(); c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2); c.fill();
-        // Beak
+        c.fillStyle = '#fff'; c.beginPath(); c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#000'; c.beginPath(); c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2); c.fill();
         c.fillStyle = '#ff6600';
-        c.beginPath();
-        c.moveTo(sz / 2, 0); c.lineTo(sz / 2 + sz * 0.35, sz * 0.08);
-        c.lineTo(sz / 2, sz * 0.22); c.closePath(); c.fill();
-        // Wing
+        c.beginPath(); c.moveTo(sz / 2, 0); c.lineTo(sz / 2 + sz * 0.35, sz * 0.08); c.lineTo(sz / 2, sz * 0.22); c.fill();
         c.fillStyle = '#ffb300';
         c.beginPath();
         if (this.isFlapping) c.ellipse(-sz * 0.14, -sz * 0.22, sz * 0.4, sz * 0.28, -0.5, 0, Math.PI * 2);
         else c.ellipse(-sz * 0.14, sz * 0.14, sz * 0.34, sz * 0.22, -0.3, 0, Math.PI * 2);
-        c.fill();
-        c.restore();
-
-        // Boundary lines
+        c.fill(); c.restore();
         c.strokeStyle = '#00d4ff'; c.lineWidth = 2;
         c.beginPath(); c.moveTo(0, 2); c.lineTo(W, 2); c.stroke();
         c.beginPath(); c.moveTo(0, H - 2); c.lineTo(W, H - 2); c.stroke();
     },
 
     loop() {
-        // Only update & draw when the game tab is visible
-        if (currentImuMode === 'game') {
-            this.update();
-            this.draw();
+        // OPTIMIZATION: Only run loop if Game Mode is active
+        if (currentImuMode === 'game') { 
+            this.update(); 
+            this.draw(); 
         }
         requestAnimationFrame(() => this.loop());
     }
 };
 
 function fbResizeCanvas() { fb.resize(); }
-function fbHandlePitch(deg) {
-    // Only process pitch when game tab is active
-    if (currentImuMode === 'game') fb.handlePitch(deg);
-}
-window.addEventListener('resize', fbResizeCanvas);
-fb.init();
+function fbHandlePitch(deg) { if (currentImuMode === 'game') fb.handlePitch(deg); }
+
+// =============================================
+// INITIALIZATION
+// =============================================
+document.addEventListener('DOMContentLoaded', () => {
+    // 1. Init Three.js Scene
+    init3D();
+    
+    // 2. Init Game
+    fb.init();
+    
+    // 3. Attach Step Source Checkbox
+    const stepSourceCheckbox = document.getElementById('useDeviceStep');
+    if (stepSourceCheckbox) {
+        stepSourceCheckbox.addEventListener('change', (e) => {
+            useDeviceStep = e.target.checked;
+        });
+    }
+
+    // 4. Handle Resizing
+    window.addEventListener('resize', () => {
+        resize3D();
+        fbResizeCanvas();
+    });
+    
+    // 5. Initial console log for debugging
+    console.log("IMU Dashboard Initialized. Mode: 3D");
+});
