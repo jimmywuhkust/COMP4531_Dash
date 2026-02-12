@@ -275,7 +275,13 @@ input:focus {
 .sensor-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
 .sensor-label { color: var(--text-secondary); font-weight: 700; }
 
-.control-actions { display: flex; gap: 10px; margin-bottom: 12px; }
+.control-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.btn-recalibrate {
+    background: rgba(52, 199, 89, 0.08); color: var(--success);
+    font-weight: 600; font-size: 11px; padding: 6px 8px;
+    flex: 0 0 auto;
+}
+.btn-recalibrate:hover { background: rgba(52, 199, 89, 0.15); }
 .csv-download-row {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 16px; padding: 6px 10px;
@@ -514,3 +520,46 @@ canvas { width: 100%; height: 200px; border-radius: 6px; background: #f9f9fa; }
     70% { box-shadow: 0 0 0 10px rgba(255, 59, 48, 0); }
     100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
 }
+
+/* --- CALIBRATION DIALOG --- */
+.calib-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    animation: fadeIn 0.25s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.calib-card {
+    background: white; border-radius: var(--radius-l);
+    padding: 36px 40px; max-width: 440px; width: 90%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    text-align: center;
+}
+.calib-card h3 { margin: 0 0 8px; font-size: 20px; }
+.calib-desc { color: var(--text-secondary); font-size: 14px; line-height: 1.6; margin: 0 0 24px; }
+.calib-diagram {
+    display: flex; justify-content: center; margin-bottom: 20px;
+}
+.calib-board { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.calib-board-img {
+    width: 140px; height: auto;
+    transform: rotate(180deg);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+}
+.calib-arrow {
+    display: flex; flex-direction: column; align-items: center;
+    color: var(--primary); font-size: 12px; font-weight: 600;
+    gap: 2px;
+}
+.calib-reason {
+    background: #f5f5f7; border-radius: 12px;
+    padding: 14px 18px; font-size: 12px; line-height: 1.6;
+    color: var(--text-secondary); text-align: left;
+    margin-bottom: 24px;
+}
+.calib-reason strong { color: var(--text-primary); }
+.calib-actions { display: flex; gap: 12px; }
+.calib-go { flex: 2; }
+.calib-cancel { flex: 1; }

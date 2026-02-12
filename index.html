@@ -100,6 +100,7 @@
                 <div class="control-actions">
                     <button id="startBtn" class="btn-secondary small" onclick="toggleStream()">Start Stream</button>
                     <button class="btn-secondary small" onclick="send('STOP'); resetStreamBtn();">Stop</button>
+                    <button class="btn-secondary small btn-recalibrate" onclick="recalibrate()">Recal</button>
                 </div>
                 <div id="csvDownloadRow" class="csv-download-row" style="display:none;">
                     <span id="csvFileName" class="csv-filename"></span>
@@ -221,6 +222,35 @@
             </div>
         </section>
 
+    </div>
+
+    <!-- Calibration Dialog -->
+    <div id="calibDialog" class="calib-overlay" style="display:none;">
+        <div class="calib-card">
+            <h3>Calibration Required</h3>
+            <p class="calib-desc">Place the board on a flat surface with the <strong>USB-C port facing toward you</strong>, then press Start.</p>
+
+            <div class="calib-diagram">
+                <div class="calib-board">
+                    <img src="xiaonrf52840sence.png" alt="XIAO nRF52840" class="calib-board-img">
+                    <div class="calib-arrow">
+                        <svg viewBox="0 0 24 40" width="24" height="40">
+                            <path d="M12 0 L12 32 M4 24 L12 34 L20 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <span>USB-C Toward You</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="calib-reason">
+                <strong>Why?</strong> This 6-axis IMU (accelerometer + gyroscope) can detect pitch &amp; roll from gravity, but has <strong>no magnetometer</strong> to determine absolute heading. The initial yaw (heading = 0&deg;) is set by your physical placement at start time.
+            </div>
+
+            <div class="calib-actions">
+                <button class="btn-primary calib-go" id="calibStartBtn">Start Streaming</button>
+                <button class="btn-secondary calib-cancel" onclick="closeCalibDialog()">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <script src="script.js"></script>

@@ -25,6 +25,7 @@ let useDeviceStep = false;
 // Current IMU sub-tab: '3d' | 'steps' | 'game'
 let currentImuMode = '3d';
 
+
 // CSV Recording
 let csvRows = [];
 let csvRecording = false;
@@ -101,17 +102,50 @@ function setImuMode(mode) {
 }
 
 // =============================================
+// RECALIBRATE
+// =============================================
+function recalibrate() {
+    tPitch = 0;
+    tRoll = 0;
+    tYaw = 0;
+    log("Recalibrated: orientation reset to zero.");
+}
+
+// =============================================
 // CSV & RECORDING
 // =============================================
 function toggleStream() {
+    // Show calibration dialog before starting
+    const dialog = document.getElementById('calibDialog');
+    if (dialog) {
+        dialog.style.display = 'flex';
+        const goBtn = document.getElementById('calibStartBtn');
+        // Replace listener to avoid stacking
+        const newBtn = goBtn.cloneNode(true);
+        goBtn.parentNode.replaceChild(newBtn, goBtn);
+        newBtn.addEventListener('click', () => {
+            dialog.style.display = 'none';
+            startStreamAfterCalib();
+        });
+    } else {
+        startStreamAfterCalib();
+    }
+}
+
+function closeCalibDialog() {
+    const dialog = document.getElementById('calibDialog');
+    if (dialog) dialog.style.display = 'none';
+}
+
+function startStreamAfterCalib() {
     const btn = document.getElementById('startBtn');
     send('START');
     if (btn) {
         btn.innerText = "Streaming...";
         btn.classList.add('btn-streaming');
     }
-    // Reset Yaw on start so it centers
-    tYaw = 0;
+    // Reset orientation on start
+    recalibrate();
     // Start CSV recording
     csvRows = [];
     csvRecording = true;
@@ -421,8 +455,9 @@ function handleIMU(e) {
     // 3D Orientation Math
     tPitch = -Math.atan2(-ax, Math.sqrt(ay * ay + az * az));
     tRoll = -Math.atan2(ay, az);
-    const gyroRad = gz * (Math.PI / 180);
-    tYaw -= gyroRad * dt; 
+    const gyroRad = gz;
+    // Yaw sign depends on current az: face-up (az>0) → +, face-down (az<0) → -
+    tYaw += Math.sign(az || 1) * gyroRad * dt;
 
     // Local Step Counter Logic
     if (!useDeviceStep) {
