@@ -468,6 +468,13 @@ function handleIMU(e) {
     // Yaw sign depends on current az: face-up (az>0) → +, face-down (az<0) → -
     tYaw += Math.sign(az || 1) * gyroRad * dt;
 
+    const oriP = document.getElementById('oriPitch');
+    const oriR = document.getElementById('oriRoll');
+    const oriY = document.getElementById('oriYaw');
+    if (oriP) oriP.innerText = (tPitch * 180 / Math.PI).toFixed(1) + '\u00B0';
+    if (oriR) oriR.innerText = (tRoll * 180 / Math.PI).toFixed(1) + '\u00B0';
+    if (oriY) oriY.innerText = (tYaw * 180 / Math.PI).toFixed(1) + '\u00B0';
+
     // Local Step Counter Logic
     if (!useDeviceStep) {
         const magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
