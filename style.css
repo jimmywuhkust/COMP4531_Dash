@@ -275,6 +275,23 @@ input:focus {
 .sensor-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
 .sensor-label { color: var(--text-secondary); font-weight: 700; }
 
+.orientation-data {
+    display: flex; gap: 6px; margin-bottom: 16px;
+}
+.orient-row {
+    flex: 1; text-align: center;
+    background: #f5f5f7; border-radius: 10px; padding: 8px 4px;
+}
+.orient-label {
+    display: block; font-size: 10px; font-weight: 600;
+    color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+.orient-val {
+    display: block; font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; font-weight: 700; color: var(--text-primary);
+}
+
 .control-actions { display: flex; gap: 8px; margin-bottom: 12px; }
 .btn-recalibrate {
     background: rgba(52, 199, 89, 0.08); color: var(--success);

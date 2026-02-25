@@ -97,6 +97,21 @@
                     </div>
                 </div>
 
+                <div class="orientation-data" id="orientationData">
+                    <div class="orient-row">
+                        <span class="orient-label">Pitch</span>
+                        <span class="orient-val" id="oriPitch">0.0&deg;</span>
+                    </div>
+                    <div class="orient-row">
+                        <span class="orient-label">Roll</span>
+                        <span class="orient-val" id="oriRoll">0.0&deg;</span>
+                    </div>
+                    <div class="orient-row">
+                        <span class="orient-label">Yaw</span>
+                        <span class="orient-val" id="oriYaw">0.0&deg;</span>
+                    </div>
+                </div>
+
                 <div class="control-actions">
                     <button id="startBtn" class="btn-secondary small" onclick="toggleStream()">Start Stream</button>
                     <button class="btn-secondary small" onclick="send('STOP'); resetStreamBtn();">Stop</button>

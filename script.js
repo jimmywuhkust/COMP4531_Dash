@@ -19,6 +19,10 @@ const LERP = 0.1;
 let targetY = 20;
 let currentY = 20;
 
+// Dynamic 3D rotation labels
+let rotTextX, rotTextY, rotTextZ;
+
+
 // Step source selection
 let useDeviceStep = false;
 
@@ -98,6 +102,8 @@ function setImuMode(mode) {
         // 3D Mode
         if (graphs) graphs.style.display = 'flex';
         setTimeout(resize3D, 50);
+        // Restart the 3D animation loop if it was stopped
+        animate();
     }
 }
 
@@ -419,11 +425,18 @@ function handleIMU(e) {
     streamTimeout = setTimeout(() => { resetStreamBtn(); }, 1000);
 
     // --- GAME MODE (OPTIMIZATION) ---
-    // If we are in Game Mode, ONLY calculate pitch and return immediately.
-    // This prevents the 3D Math from running in the background.
+    // In Game Mode, calculate pitch for game and update UI text, but skip heavy 3D/graph operations
     if (currentImuMode === 'game') {
         const imuPitchDeg = Math.atan2(-ax, Math.sqrt(ay * ay + az * az)) * (180 / Math.PI);
         fbHandlePitch(imuPitchDeg);
+        
+        // Update Text UI (still needed for sidebar display)
+        const accValEl = document.getElementById('accVal');
+        const gyroValEl = document.getElementById('gyroVal');
+        if (accValEl) accValEl.innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
+        if (gyroValEl) gyroValEl.innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
+        
+        // Skip 3D math, graphs, and other heavy operations
         return; 
     }
 
@@ -458,6 +471,13 @@ function handleIMU(e) {
     const gyroRad = gz;
     // Yaw sign depends on current az: face-up (az>0) → +, face-down (az<0) → -
     tYaw += Math.sign(az || 1) * gyroRad * dt;
+
+    const oriP = document.getElementById('oriPitch');
+    const oriR = document.getElementById('oriRoll');
+    const oriY = document.getElementById('oriYaw');
+    if (oriP) oriP.innerText = (tPitch * 180 / Math.PI).toFixed(1) + '\u00B0';
+    if (oriR) oriR.innerText = (tRoll * 180 / Math.PI).toFixed(1) + '\u00B0';
+    if (oriY) oriY.innerText = (tYaw * 180 / Math.PI).toFixed(1) + '\u00B0';
 
     // Local Step Counter Logic
     if (!useDeviceStep) {
@@ -507,14 +527,113 @@ function init3D() {
     const dir = new THREE.DirectionalLight(0xffffff, 1);
     dir.position.set(5, 10, 7);
     scene.add(dir);
-    
+
     const grid = new THREE.GridHelper(30, 30, 0xdddddd, 0xeeeeee);
     grid.position.y = -3;
     scene.add(grid);
 
+    addAxisArrows(board3d);
+    addRotationRings(board3d);
+
+    const L = 3.5;
+    rotTextX = createDynamicSprite('Roll 0.0\u00B0', '#ff3b30');
+    rotTextX.position.set(0, 0, -(L + 1.0));
+    board3d.add(rotTextX);
+
+    rotTextY = createDynamicSprite('Pitch 0.0\u00B0', '#34c759');
+    rotTextY.position.set(-(L + 0.8), 0.5, 0);
+    board3d.add(rotTextY);
+
+    rotTextZ = createDynamicSprite('Yaw 0.0\u00B0', '#007aff');
+    rotTextZ.position.set(0, L + 0.8, 0);
+    board3d.add(rotTextZ);
+
     camera.position.set(0, 5, 5);
     camera.lookAt(0, 0, 0);
     animate();
+}
+
+function makeArrow(dir, color, len) {
+    const arrow = new THREE.ArrowHelper(
+        dir.normalize(), new THREE.Vector3(0, 0, 0), len, color, len * 0.18, len * 0.1
+    );
+    return arrow;
+}
+
+function addAxisArrows(parent) {
+    const L = 3.5;
+    parent.add(makeArrow(new THREE.Vector3(0, 0, -1), 0xff3b30, L)); // X — red (Roll, toward USB)
+    parent.add(makeArrow(new THREE.Vector3(-1, 0, 0), 0x34c759, L)); // Y — green (Pitch, device left)
+    parent.add(makeArrow(new THREE.Vector3(0, 1, 0), 0x007aff, L));  // Z — blue (Yaw, up)
+}
+
+function makeTextSprite(text, color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.font = 'bold 32px Inter, sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 64, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(1.6, 0.8, 1);
+    return sprite;
+}
+
+function createDynamicSprite(text, color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(2.8, 0.7, 1);
+    sprite.userData = { canvas, ctx, color, tex };
+    updateSpriteText(sprite, text);
+    return sprite;
+}
+
+function updateSpriteText(sprite, text) {
+    const { canvas, ctx, color, tex } = sprite.userData;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = 'bold 28px Inter, sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    tex.needsUpdate = true;
+}
+
+function addRotationRings(parent) {
+    const radius = 2.8;
+    const segments = 64;
+    const rings = [
+        { axis: 'z', color: 0xff3b30 },
+        { axis: 'x', color: 0x34c759 },
+        { axis: 'y', color: 0x007aff },
+    ];
+    rings.forEach(({ axis, color }) => {
+        const points = [];
+        for (let i = 0; i <= segments; i++) {
+            const a = (i / segments) * Math.PI * 2;
+            const c = Math.cos(a) * radius;
+            const s = Math.sin(a) * radius;
+            if (axis === 'x') points.push(new THREE.Vector3(0, c, s));
+            else if (axis === 'y') points.push(new THREE.Vector3(c, 0, s));
+            else points.push(new THREE.Vector3(c, s, 0));
+        }
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+        const mat = new THREE.LineDashedMaterial({
+            color, transparent: true, opacity: 0.2,
+            dashSize: 0.3, gapSize: 0.15
+        });
+        const line = new THREE.Line(geo, mat);
+        line.computeLineDistances();
+        parent.add(line);
+    });
 }
 
 function drawGraph(cv, data, scale) {
@@ -539,11 +658,16 @@ function drawGraph(cv, data, scale) {
 }
 
 function animate() {
+    // OPTIMIZATION: Completely stop the 3D animation loop when not in 3D mode
+    // This eliminates all overhead from Three.js rendering and graph drawing
+    if (currentImuMode !== '3d') {
+        // Don't schedule next frame - completely stop the loop
+        // The loop will restart automatically when switching back to 3D mode via setImuMode
+        return;
+    }
+    
+    // Continue the loop only in 3D mode
     requestAnimationFrame(animate);
-
-    // OPTIMIZATION: If not in 3D mode, do NOT render the scene.
-    // This saves massive CPU/GPU resources when playing the game.
-    if (currentImuMode !== '3d') return;
 
     if (board3d) {
         currentY += (targetY - currentY) * 0.05; 
@@ -564,6 +688,15 @@ function animate() {
         if(targetY === 0) {
              board3d.position.y += Math.sin(Date.now() * 0.002) * 0.05;
         }
+    }
+
+    if (rotTextX) {
+        const rollDeg = (tRoll * 180 / Math.PI).toFixed(1);
+        const pitchDeg = (tPitch * 180 / Math.PI).toFixed(1);
+        const yawDeg = (tYaw * 180 / Math.PI).toFixed(1);
+        updateSpriteText(rotTextX, 'Roll ' + rollDeg + '\u00B0');
+        updateSpriteText(rotTextY, 'Pitch ' + pitchDeg + '\u00B0');
+        updateSpriteText(rotTextZ, 'Yaw ' + yawDeg + '\u00B0');
     }
 
     renderer.render(scene, camera);
@@ -593,9 +726,9 @@ const fb = {
     BIRD_X_FRAC: 0.18,
     PIPE_W: 55,
     PIPE_GAP: 190,
-    PIPE_SPEED: 2.5,
+    PIPE_SPEED: 2.5, // Base speed (will be multiplied by delta time)
     PIPE_INTERVAL: 2200,
-    GRAVITY: 0.22,
+    GRAVITY: 0.22, // Base gravity (will be multiplied by delta time)
     MAX_FALL: 5.5,
     KEY_FLAP: -5.5,
 
@@ -607,6 +740,11 @@ const fb = {
     FLAP_COOLDOWN: 120,
     SWING_TIMEOUT: 300,
 
+    // Delta time tracking for frame-rate independent updates
+    lastFrameTime: 0,
+    targetFPS: 60,
+    frameTime: 1000 / 60, // 16.67ms per frame at 60fps
+
     running: false, over: false,
     score: 0, highScore: 0,
     birdY: 0, vel: 0,
@@ -617,11 +755,17 @@ const fb = {
     pitch: 0, lastPitch: 0, pitchVel: 0,
     swingActive: false, swingStartPitch: 0, swingStartTime: 0, swingRange: 0,
     stars: [],
+    
+    // Cached background gradient for performance optimization
+    bgGradient: null,
 
     init() {
         this.canvas = document.getElementById('fbCanvas');
         if (!this.canvas) return;
         this.ctx = this.canvas.getContext('2d');
+        
+        // Initialize frame time tracking
+        this.lastFrameTime = performance.now();
 
         for (let i = 0; i < 40; i++) {
             this.stars.push([Math.random(), Math.random(), 0.5 + Math.random() * 1.5]);
@@ -676,12 +820,16 @@ const fb = {
         this.BIRD_SIZE = Math.round(28 * s);
         this.PIPE_GAP = Math.round(190 * s);
         this.PIPE_W = Math.round(55 * s);
+        // Base speeds (will be multiplied by delta time in update)
         this.PIPE_SPEED = 2.5 * s;
         this.GRAVITY = 0.22 * s;
         this.MAX_FALL = 5.5 * s;
         this.KEY_FLAP = -5.5 * s;
         this.FLAP_POWER_MIN = -5 * s;
         this.FLAP_POWER_MAX = -10 * s;
+        
+        // Clear cached background gradient on resize
+        this.bgGradient = null;
     },
 
     toggleMode() {
@@ -708,6 +856,7 @@ const fb = {
         this.lastFlap = 0;
         this.isFlapping = false;
         this.lastSpawn = Date.now();
+        this.lastFrameTime = performance.now(); // Initialize frame time tracking
         const overlay = document.getElementById('fbOverlay');
         if (overlay) overlay.classList.add('hidden');
         document.getElementById('fbScore').innerText = '0';
@@ -794,19 +943,33 @@ const fb = {
 
     update() {
         if (!this.running) return;
-        const now = Date.now();
-        if (now - this.lastSpawn > this.PIPE_INTERVAL) {
+        
+        // Calculate delta time for frame-rate independent movement
+        const now = performance.now();
+        let deltaTime = (now - this.lastFrameTime) / this.frameTime; // Normalize to 60fps
+        this.lastFrameTime = now;
+        
+        // Clamp delta time to prevent large jumps (e.g., tab switching)
+        deltaTime = Math.min(deltaTime, 2.0); // Max 2x speed if frame drop
+        
+        const nowMs = Date.now();
+        if (nowMs - this.lastSpawn > this.PIPE_INTERVAL) {
             this.spawnPipe();
-            this.lastSpawn = now;
+            this.lastSpawn = nowMs;
         }
-        this.vel += this.GRAVITY;
+        
+        // Apply gravity and movement with delta time
+        this.vel += this.GRAVITY * deltaTime;
         if (this.vel > this.MAX_FALL) this.vel = this.MAX_FALL;
-        this.birdY += this.vel;
-        if (this.isFlapping && now - this.lastFlap > 100) this.isFlapping = false;
+        this.birdY += this.vel * deltaTime;
+        
+        if (this.isFlapping && nowMs - this.lastFlap > 100) this.isFlapping = false;
         const birdX = this.W * this.BIRD_X_FRAC;
+        
         for (let i = this.pipes.length - 1; i >= 0; i--) {
             const p = this.pipes[i];
-            p.x -= this.PIPE_SPEED;
+            // Move pipes with delta time for consistent speed
+            p.x -= this.PIPE_SPEED * deltaTime;
             if (!p.scored && p.x + this.PIPE_W < birdX) {
                 p.scored = true;
                 this.score++;
@@ -833,18 +996,39 @@ const fb = {
     draw() {
         const c = this.ctx, W = this.W, H = this.H;
         if (!c) return;
-        const bg = c.createLinearGradient(0, 0, 0, H);
-        bg.addColorStop(0, '#0c1445'); bg.addColorStop(0.5, '#1a237e'); bg.addColorStop(1, '#283593');
-        c.fillStyle = bg; c.fillRect(0, 0, W, H);
+        
+        // Cache background gradient for performance
+        if (!this.bgGradient || this.bgGradient.height !== H) {
+            this.bgGradient = c.createLinearGradient(0, 0, 0, H);
+            this.bgGradient.addColorStop(0, '#0c1445');
+            this.bgGradient.addColorStop(0.5, '#1a237e');
+            this.bgGradient.addColorStop(1, '#283593');
+            this.bgGradient.height = H; // Store height for cache invalidation
+        }
+        c.fillStyle = this.bgGradient;
+        c.fillRect(0, 0, W, H);
+        
+        // Optimize star rendering - batch fill operations
         c.fillStyle = 'rgba(255,255,255,0.3)';
+        c.beginPath();
         this.stars.forEach(([fx, fy, r]) => {
-            c.beginPath(); c.arc(fx * W, fy * H, r, 0, Math.PI * 2); c.fill();
+            c.moveTo(fx * W + r, fy * H);
+            c.arc(fx * W, fy * H, r, 0, Math.PI * 2);
         });
+        c.fill();
+        
+        // Draw pipes - create gradient per pipe to avoid flickering
+        // (Pipe count is low, so performance impact is minimal)
         this.pipes.forEach(p => {
             const gt = p.gapY - this.PIPE_GAP / 2;
             const gb = p.gapY + this.PIPE_GAP / 2;
+            
+            // Create gradient aligned with pipe position to prevent flickering
             const pg = c.createLinearGradient(p.x, 0, p.x + this.PIPE_W, 0);
-            pg.addColorStop(0, '#1b5e20'); pg.addColorStop(0.5, '#4caf50'); pg.addColorStop(1, '#1b5e20');
+            pg.addColorStop(0, '#1b5e20');
+            pg.addColorStop(0.5, '#4caf50');
+            pg.addColorStop(1, '#1b5e20');
+            
             c.fillStyle = pg;
             c.fillRect(p.x, 0, this.PIPE_W, gt);
             c.fillRect(p.x, gb, this.PIPE_W, H - gb);
@@ -852,34 +1036,68 @@ const fb = {
             c.fillRect(p.x - 4, gt - 20, this.PIPE_W + 8, 20);
             c.fillRect(p.x - 4, gb, this.PIPE_W + 8, 20);
         });
+        
+        // Draw bird
         const bx = W * this.BIRD_X_FRAC, by = this.birdY, sz = this.BIRD_SIZE;
         const rot = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, this.vel * 0.05));
         c.save();
-        c.translate(bx, by); c.rotate(rot);
+        c.translate(bx, by);
+        c.rotate(rot);
         c.shadowColor = this.isFlapping ? '#ffff00' : '#ffd700';
         c.shadowBlur = this.isFlapping ? 25 : 12;
         c.fillStyle = '#ffd700';
-        c.beginPath(); c.arc(0, 0, sz / 2, 0, Math.PI * 2); c.fill();
+        c.beginPath();
+        c.arc(0, 0, sz / 2, 0, Math.PI * 2);
+        c.fill();
         c.shadowBlur = 0;
-        c.fillStyle = '#fff'; c.beginPath(); c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2); c.fill();
-        c.fillStyle = '#000'; c.beginPath(); c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#fff';
+        c.beginPath();
+        c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#000';
+        c.beginPath();
+        c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2);
+        c.fill();
         c.fillStyle = '#ff6600';
-        c.beginPath(); c.moveTo(sz / 2, 0); c.lineTo(sz / 2 + sz * 0.35, sz * 0.08); c.lineTo(sz / 2, sz * 0.22); c.fill();
+        c.beginPath();
+        c.moveTo(sz / 2, 0);
+        c.lineTo(sz / 2 + sz * 0.35, sz * 0.08);
+        c.lineTo(sz / 2, sz * 0.22);
+        c.fill();
         c.fillStyle = '#ffb300';
         c.beginPath();
-        if (this.isFlapping) c.ellipse(-sz * 0.14, -sz * 0.22, sz * 0.4, sz * 0.28, -0.5, 0, Math.PI * 2);
-        else c.ellipse(-sz * 0.14, sz * 0.14, sz * 0.34, sz * 0.22, -0.3, 0, Math.PI * 2);
-        c.fill(); c.restore();
-        c.strokeStyle = '#00d4ff'; c.lineWidth = 2;
-        c.beginPath(); c.moveTo(0, 2); c.lineTo(W, 2); c.stroke();
-        c.beginPath(); c.moveTo(0, H - 2); c.lineTo(W, H - 2); c.stroke();
+        if (this.isFlapping) {
+            c.ellipse(-sz * 0.14, -sz * 0.22, sz * 0.4, sz * 0.28, -0.5, 0, Math.PI * 2);
+        } else {
+            c.ellipse(-sz * 0.14, sz * 0.14, sz * 0.34, sz * 0.22, -0.3, 0, Math.PI * 2);
+        }
+        c.fill();
+        c.restore();
+        
+        // Draw borders
+        c.strokeStyle = '#00d4ff';
+        c.lineWidth = 2;
+        c.beginPath();
+        c.moveTo(0, 2);
+        c.lineTo(W, 2);
+        c.stroke();
+        c.beginPath();
+        c.moveTo(0, H - 2);
+        c.lineTo(W, H - 2);
+        c.stroke();
     },
 
     loop() {
         // OPTIMIZATION: Only run loop if Game Mode is active
         if (currentImuMode === 'game') { 
+            // Only update and draw if game is running (saves CPU when paused)
+            if (this.running) {
             this.update(); 
             this.draw(); 
+            } else if (!this.over) {
+                // Draw static frame when game is not running but not over (menu state)
+                this.draw();
+            }
         }
         requestAnimationFrame(() => this.loop());
     }
