@@ -221,7 +221,27 @@
         </section>
 
         <section id="view-audio" class="view-section">
-            <div class="card center-card audio-card">
+            <aside class="glass-sidebar">
+                <div class="sidebar-header">
+                    <div class="sub-nav">
+                        <button class="sub-btn active" onclick="setAudioMode('record')">Voice Memo</button>
+                        <button class="sub-btn" onclick="setAudioMode('doppler')">Doppler</button>
+                    </div>
+                </div>
+
+                <div class="stats-container" id="dopplerStats" style="display:none;">
+                    <div class="stat-item">
+                        <span class="label">Frequency Shift</span>
+                        <span class="value" id="dopplerShift">0.0 Hz</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Peak Freq</span>
+                        <span class="value" id="peakFreq">5000.0 Hz</span>
+                    </div>
+                </div>
+            </aside>
+
+            <div id="audio-record-view" class="card center-card audio-card">
                 <div class="waveform-icon">
                     <span></span><span></span><span></span><span></span><span></span>
                 </div>
@@ -234,6 +254,22 @@
                 <button id="recBtn" class="btn-record" onclick="recordAudio()">
                     <div class="inner-circle"></div>
                 </button>
+            </div>
+
+            <div id="audio-doppler-view" class="card center-card audio-card" style="display:none;">
+                <div class="waveform-icon">
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <h3>Doppler Tracking</h3>
+                <p>Real-time frequency shift monitoring at 5 kHz reference.</p>
+
+                <canvas id="dopplerCanvas" style="margin: 20px 0; height: 200px;"></canvas>
+                <div id="dopplerStatus" class="status-pill">Ready</div>
+
+                <div class="control-actions" style="margin-top: 20px;">
+                    <button id="dopplerStartBtn" class="btn-primary small" onclick="startDoppler()">Start</button>
+                    <button id="dopplerStopBtn" class="btn-secondary small" onclick="stopDoppler()" disabled>Stop</button>
+                </div>
             </div>
         </section>
 

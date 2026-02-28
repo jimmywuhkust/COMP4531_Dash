@@ -29,6 +29,14 @@ let useDeviceStep = false;
 // Current IMU sub-tab: '3d' | 'steps' | 'game'
 let currentImuMode = '3d';
 
+// Current Audio sub-tab: 'record' | 'doppler'
+let currentAudioMode = 'record';
+
+// Doppler tracking variables
+let isDopplerActive = false;
+let dopplerHistory = Array(200).fill(0);
+let dopplerIndex = 0;
+
 
 // CSV Recording
 let csvRows = [];
@@ -104,6 +112,30 @@ function setImuMode(mode) {
         setTimeout(resize3D, 50);
         // Restart the 3D animation loop if it was stopped
         animate();
+    }
+}
+
+function setAudioMode(mode) {
+    currentAudioMode = mode;
+    document.querySelectorAll('.sub-btn').forEach(b => b.classList.remove('active'));
+    
+    const activeBtn = document.querySelector(`button[onclick="setAudioMode('${mode}')"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+
+    const recordView = document.getElementById('audio-record-view');
+    const dopplerView = document.getElementById('audio-doppler-view');
+    const dopplerStats = document.getElementById('dopplerStats');
+
+    if (recordView) recordView.style.display = 'none';
+    if (dopplerView) dopplerView.style.display = 'none';
+    if (dopplerStats) dopplerStats.style.display = 'none';
+
+    if (mode === 'record') {
+        if (recordView) recordView.style.display = 'block';
+    } else if (mode === 'doppler') {
+        if (dopplerView) dopplerView.style.display = 'block';
+        if (dopplerStats) dopplerStats.style.display = 'grid';
+        stopDoppler(); // Reset before showing
     }
 }
 
@@ -322,6 +354,7 @@ function handleStepData(e) {
 
 function handleControlData(e) {
     const msg = new TextDecoder().decode(e.target.value);
+    
     if (msg.startsWith("LORA:")) {
         addChatBubble(msg.substring(5), 'in');
     } else { log("Rx: " + msg); }
@@ -359,8 +392,20 @@ async function recordAudio() {
 }
 
 function handleAudio(e) {
-    if (!isRec) return;
     const d = new Uint8Array(e.target.value.buffer);
+
+    if (isDopplerActive && d.length > 0 && d.length < 30) {
+        try {
+            const msg = new TextDecoder().decode(d);
+            if (msg.startsWith("Shift:")) {
+                const shiftVal = parseFloat(msg.substring(6));
+                if (!isNaN(shiftVal)) handleDopplerData(shiftVal);
+                return;
+            }
+        } catch (_) {}
+    }
+
+    if (!isRec) return;
     if (d.length === 0) {
         isRec = false;
         const recBtn = document.getElementById('recBtn');
@@ -397,6 +442,88 @@ function drawWaveform(data) {
         if (i === 0) cx.moveTo(i, val); else cx.lineTo(i, val);
     }
     cx.stroke();
+}
+
+async function startDoppler() {
+    isDopplerActive = true;
+    dopplerHistory = Array(200).fill(0);
+    dopplerIndex = 0;
+    const startBtn = document.getElementById('dopplerStartBtn');
+    const stopBtn = document.getElementById('dopplerStopBtn');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = false;
+    document.getElementById('dopplerStatus').innerText = "Tracking...";
+    await send("DOPPLER");
+    log("Doppler tracking started");
+}
+
+function stopDoppler() {
+    const wasActive = isDopplerActive;
+    isDopplerActive = false;
+    const startBtn = document.getElementById('dopplerStartBtn');
+    const stopBtn = document.getElementById('dopplerStopBtn');
+    if (startBtn) startBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
+    document.getElementById('dopplerStatus').innerText = "Stopped";
+    if (wasActive) send("STOP");
+}
+
+function handleDopplerData(shiftValue) {
+    if (!isDopplerActive) return;
+    dopplerHistory[dopplerIndex] = shiftValue;
+    dopplerIndex = (dopplerIndex + 1) % 200;
+    
+    const shiftEl = document.getElementById('dopplerShift');
+    if (shiftEl) shiftEl.innerText = shiftValue.toFixed(1) + ' Hz';
+    
+    drawDopplerGraph();
+}
+
+function drawDopplerGraph() {
+    const c = document.getElementById('dopplerCanvas');
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const w = c.width = c.clientWidth;
+    const h = c.height = c.clientHeight;
+    const YLIM = 100;
+    const labelMargin = 36;
+    const padY = 14;
+    const plotW = w - labelMargin;
+    const plotH = h - padY * 2;
+    const mid = padY + plotH / 2;
+    
+    ctx.fillStyle = '#0c1445';
+    ctx.fillRect(0, 0, w, h);
+    
+    // Grid lines + Y-axis labels at -100, -50, 0, 50, 100
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const ticks = [100, 50, 0, -50, -100];
+    for (const tick of ticks) {
+        const y = mid - (tick / YLIM) * (plotH / 2);
+        ctx.strokeStyle = tick === 0 ? 'rgba(0,212,255,0.25)' : 'rgba(0,212,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(labelMargin, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0,212,255,0.5)';
+        ctx.fillText(tick + '', labelMargin - 4, y);
+    }
+    
+    // Draw data (clamped to ±YLIM)
+    ctx.beginPath();
+    ctx.strokeStyle = '#00d4ff';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 200; i++) {
+        const val = Math.max(-YLIM, Math.min(YLIM, dopplerHistory[i]));
+        const x = labelMargin + (i / 200) * plotW;
+        const y = mid - (val / YLIM) * (plotH / 2);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
 }
 
 let streamTimeout; 
