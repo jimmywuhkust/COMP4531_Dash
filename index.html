@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
     <link rel="stylesheet" href="style.css">
@@ -225,7 +226,8 @@
                 <div class="sidebar-header">
                     <div class="sub-nav">
                         <button class="sub-btn active" onclick="setAudioMode('record')">Voice Memo</button>
-                        <button class="sub-btn" onclick="setAudioMode('doppler')">Doppler</button>
+                        <button class="sub-btn" onclick="setAudioMode('doppler')">Board Doppler</button>
+                        <button class="sub-btn" onclick="setAudioMode('laptop')">Laptop Doppler</button>
                     </div>
                 </div>
 
@@ -237,6 +239,21 @@
                     <div class="stat-item">
                         <span class="label">Peak Freq</span>
                         <span class="value" id="peakFreq">5000.0 Hz</span>
+                    </div>
+                </div>
+
+                <div class="stats-container" id="laptopStats" style="display:none;">
+                    <div class="stat-item">
+                        <span class="label">Velocity</span>
+                        <span class="value" id="ldVelSide">0.00 m/s</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Freq Shift</span>
+                        <span class="value" id="ldFreqSide">0.0 Hz</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Signal</span>
+                        <span class="value" id="ldStrSide">-100 dB</span>
                     </div>
                 </div>
             </aside>
@@ -260,8 +277,8 @@
                 <div class="waveform-icon">
                     <span></span><span></span><span></span><span></span><span></span>
                 </div>
-                <h3>Doppler Tracking</h3>
-                <p>Real-time frequency shift monitoring at 5 kHz reference.</p>
+                <h3>Board Doppler</h3>
+                <p>Real-time frequency shift via IoT board mic (5 kHz reference, data over BLE).</p>
 
                 <canvas id="dopplerCanvas" style="margin: 20px 0; height: 200px;"></canvas>
                 <div id="dopplerStatus" class="status-pill">Ready</div>
@@ -269,6 +286,47 @@
                 <div class="control-actions" style="margin-top: 20px;">
                     <button id="dopplerStartBtn" class="btn-primary small" onclick="startDoppler()">Start</button>
                     <button id="dopplerStopBtn" class="btn-secondary small" onclick="stopDoppler()" disabled>Stop</button>
+                </div>
+            </div>
+
+            <div id="audio-laptop-view" class="card center-card audio-card" style="display:none; max-width:none; width:100%;">
+                <div class="waveform-icon">
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <h3>Laptop Doppler</h3>
+                <p>Velocity measurement using your laptop mic (Web Audio API). Play a tone on your phone and move it toward / away.</p>
+
+                <div class="ld-config-row" style="display:flex; gap:12px; margin:16px 0; justify-content:center; flex-wrap:wrap;">
+                    <div class="input-group" style="flex:0 1 160px; min-width:120px;">
+                        <label>Center Freq (Hz)</label>
+                        <input type="number" id="ldCenterFreq" value="18000" min="1000" max="22000" step="100">
+                    </div>
+                    <div class="input-group" style="flex:0 1 130px; min-width:100px;">
+                        <label>FFT Size</label>
+                        <input type="number" id="ldFftSize" value="8192" min="2048" max="16384" step="2048">
+                    </div>
+                </div>
+
+                <div style="text-align:center; padding:12px 0;">
+                    <div style="font-size:13px; color:#888; margin-bottom:2px;">Current Velocity</div>
+                    <span id="ldVelDisplay" style="font-size:56px; font-weight:bold;">0.00</span>
+                    <span style="font-size:20px; color:#888; margin-left:4px;">m/s</span>
+                    <div style="display:flex; justify-content:center; gap:24px; margin-top:8px; font-size:13px; color:#888; flex-wrap:wrap;">
+                        <span>Shift: <strong id="ldFreqDisplay" style="color:#007aff;">0.0 Hz</strong></span>
+                        <span>Signal: <strong id="ldStrDisplay" style="color:#ff3b30;">-100 dB</strong></span>
+                    </div>
+                </div>
+
+                <div id="ldVelocityGraph" style="width:100%; height:280px;"></div>
+                <div id="ldSpectrumGraph" style="width:100%; height:220px;"></div>
+
+                <div id="ldStatus" class="status-pill">Stopped</div>
+
+                <div class="control-actions" style="margin-top: 16px;">
+                    <button id="ldStartBtn" class="btn-primary small" onclick="ldStart()">Start</button>
+                    <button id="ldStopBtn" class="btn-secondary small" onclick="ldStop()" disabled>Stop</button>
+                    <button id="ldRecordBtn" class="btn-secondary small" onclick="ldToggleRecording()">Record</button>
+                    <button id="ldSaveBtn" class="btn-secondary small" onclick="ldSaveRecording()">Save</button>
                 </div>
             </div>
         </section>

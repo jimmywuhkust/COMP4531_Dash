@@ -124,18 +124,28 @@ function setAudioMode(mode) {
 
     const recordView = document.getElementById('audio-record-view');
     const dopplerView = document.getElementById('audio-doppler-view');
+    const laptopView = document.getElementById('audio-laptop-view');
     const dopplerStats = document.getElementById('dopplerStats');
+    const laptopStats = document.getElementById('laptopStats');
 
     if (recordView) recordView.style.display = 'none';
     if (dopplerView) dopplerView.style.display = 'none';
+    if (laptopView) laptopView.style.display = 'none';
     if (dopplerStats) dopplerStats.style.display = 'none';
+    if (laptopStats) laptopStats.style.display = 'none';
+
+    if (mode !== 'laptop' && ldRunning) ldStop();
 
     if (mode === 'record') {
         if (recordView) recordView.style.display = 'block';
     } else if (mode === 'doppler') {
         if (dopplerView) dopplerView.style.display = 'block';
         if (dopplerStats) dopplerStats.style.display = 'grid';
-        stopDoppler(); // Reset before showing
+        stopDoppler();
+    } else if (mode === 'laptop') {
+        if (laptopView) laptopView.style.display = 'block';
+        if (laptopStats) laptopStats.style.display = 'grid';
+        ldInitPlots();
     }
 }
 
@@ -1232,6 +1242,270 @@ const fb = {
 
 function fbResizeCanvas() { fb.resize(); }
 function fbHandlePitch(deg) { if (currentImuMode === 'game') fb.handlePitch(deg); }
+
+// =============================================
+// LAPTOP DOPPLER DEMO
+// =============================================
+const LD_SPEED_OF_SOUND = 343.0;
+const LD_MAX_HISTORY = 200;
+const LD_PLOT_INTERVAL = 100;
+
+let ldAudioCtx = null;
+let ldAnalyser = null;
+let ldMicStream = null;
+let ldRunning = false;
+let ldAnimFrameId = null;
+let ldVelHistory = [];
+let ldFreqShiftHistory = [];
+let ldTimeHistory = [];
+let ldStartTime = 0;
+let ldLastPlotTime = 0;
+let ldIsRecording = false;
+let ldMediaRecorder = null;
+let ldRecordedChunks = [];
+let ldPlotsInitialized = false;
+
+function ldFftRadix2(re, im) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            let tmp = re[i]; re[i] = re[j]; re[j] = tmp;
+            tmp = im[i]; im[i] = im[j]; im[j] = tmp;
+        }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+        const halfLen = len >> 1;
+        const ang = -2 * Math.PI / len;
+        const wRe = Math.cos(ang), wIm = Math.sin(ang);
+        for (let i = 0; i < n; i += len) {
+            let curRe = 1, curIm = 0;
+            for (let j = 0; j < halfLen; j++) {
+                const k = i + j, kh = k + halfLen;
+                const tRe = re[kh] * curRe - im[kh] * curIm;
+                const tIm = re[kh] * curIm + im[kh] * curRe;
+                re[kh] = re[k] - tRe; im[kh] = im[k] - tIm;
+                re[k] += tRe; im[k] += tIm;
+                const newCur = curRe * wRe - curIm * wIm;
+                curIm = curRe * wIm + curIm * wRe;
+                curRe = newCur;
+            }
+        }
+    }
+}
+
+async function ldStart() {
+    if (ldRunning) return;
+    const fftSize = Number(document.getElementById('ldFftSize').value);
+    try {
+        ldMicStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+                     channelCount: 1, sampleRate: { ideal: 44100 } }
+        });
+    } catch (e) {
+        document.getElementById('ldStatus').textContent = 'Mic access denied';
+        return;
+    }
+    ldAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    const source = ldAudioCtx.createMediaStreamSource(ldMicStream);
+    ldAnalyser = ldAudioCtx.createAnalyser();
+    ldAnalyser.fftSize = fftSize;
+    ldAnalyser.smoothingTimeConstant = 0;
+    source.connect(ldAnalyser);
+
+    document.getElementById('ldStatus').textContent = 'Running (' + ldAudioCtx.sampleRate + ' Hz)';
+    document.getElementById('ldStartBtn').disabled = true;
+    document.getElementById('ldStopBtn').disabled = false;
+    ldVelHistory = []; ldFreqShiftHistory = []; ldTimeHistory = [];
+    ldStartTime = performance.now();
+    ldRunning = true;
+    ldTick();
+}
+
+function ldStop() {
+    ldRunning = false;
+    if (ldAnimFrameId) cancelAnimationFrame(ldAnimFrameId);
+    if (ldAudioCtx) { ldAudioCtx.close(); ldAudioCtx = null; }
+    if (ldMicStream) { ldMicStream.getTracks().forEach(t => t.stop()); ldMicStream = null; }
+    document.getElementById('ldStatus').textContent = 'Stopped';
+    document.getElementById('ldStartBtn').disabled = false;
+    document.getElementById('ldStopBtn').disabled = true;
+}
+
+function ldTick() {
+    if (!ldRunning) return;
+    const result = ldAnalyze();
+    if (result) {
+        document.getElementById('ldVelDisplay').textContent = result.velocity.toFixed(2);
+        document.getElementById('ldFreqDisplay').textContent = result.freqShift.toFixed(1) + ' Hz';
+        document.getElementById('ldStrDisplay').textContent = result.signalStrength.toFixed(1) + ' dB';
+
+        const s1 = document.getElementById('ldVelSide');
+        const s2 = document.getElementById('ldFreqSide');
+        const s3 = document.getElementById('ldStrSide');
+        if (s1) s1.innerText = result.velocity.toFixed(2) + ' m/s';
+        if (s2) s2.innerText = result.freqShift.toFixed(1) + ' Hz';
+        if (s3) s3.innerText = result.signalStrength.toFixed(1) + ' dB';
+
+        const now = performance.now();
+        if (now - ldLastPlotTime >= LD_PLOT_INTERVAL) {
+            ldLastPlotTime = now;
+            ldUpdatePlots(result);
+        }
+    }
+    ldAnimFrameId = requestAnimationFrame(ldTick);
+}
+
+function ldAnalyze() {
+    const n = ldAnalyser.fftSize;
+    const timeBuf = new Float32Array(n);
+    ldAnalyser.getFloatTimeDomainData(timeBuf);
+
+    const sampleRate = ldAudioCtx.sampleRate;
+    const centerFreq = Number(document.getElementById('ldCenterFreq').value);
+
+    const re = new Float64Array(n);
+    const im = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+        re[i] = timeBuf[i] * 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
+    }
+    ldFftRadix2(re, im);
+
+    const halfN = (n >> 1) + 1;
+    const magnitude = new Float64Array(halfN);
+    for (let i = 0; i < halfN; i++) {
+        magnitude[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+    }
+
+    const binWidth = sampleRate / n;
+    const searchWindow = 500;
+    const minBin = Math.max(0, Math.floor((centerFreq - searchWindow) / binWidth));
+    const maxBin = Math.min(halfN - 1, Math.ceil((centerFreq + searchWindow) / binWidth));
+
+    let peakVal = -1, peakBin = minBin;
+    for (let i = minBin; i <= maxBin; i++) {
+        if (magnitude[i] > peakVal) { peakVal = magnitude[i]; peakBin = i; }
+    }
+    let peakFreq = peakBin * binWidth;
+
+    if (peakBin > minBin && peakBin < maxBin) {
+        const alpha = magnitude[peakBin - 1];
+        const beta = magnitude[peakBin];
+        const gamma = magnitude[peakBin + 1];
+        const denom = alpha - 2 * beta + gamma;
+        if (denom !== 0) peakFreq += 0.5 * (alpha - gamma) / denom * binWidth;
+    }
+
+    const freqShift = peakFreq - centerFreq;
+    const velocity = freqShift * LD_SPEED_OF_SOUND / centerFreq;
+    const signalStrength = 20 * Math.log10(peakVal + 1e-10);
+
+    const now = (performance.now() - ldStartTime) / 1000;
+    ldVelHistory.push(velocity);
+    ldFreqShiftHistory.push(freqShift);
+    ldTimeHistory.push(now);
+    if (ldVelHistory.length > LD_MAX_HISTORY) {
+        ldVelHistory.shift(); ldFreqShiftHistory.shift(); ldTimeHistory.shift();
+    }
+
+    const specFreqs = [], specVals = [];
+    const dispMin = Math.max(0, Math.floor((centerFreq - 500) / binWidth));
+    const dispMax = Math.min(halfN - 1, Math.ceil((centerFreq + 500) / binWidth));
+    for (let i = dispMin; i <= dispMax; i++) {
+        specFreqs.push(i * binWidth);
+        specVals.push(20 * Math.log10(magnitude[i] + 1e-10));
+    }
+    return { velocity, freqShift, signalStrength, specFreqs, specVals, centerFreq };
+}
+
+function ldUpdatePlots(r) {
+    const xData = ldTimeHistory.slice();
+    const yData = ldVelHistory.slice();
+    let yMax = 5;
+    for (let i = 0; i < yData.length; i++) {
+        const absV = Math.abs(yData[i]);
+        if (absV > yMax) yMax = absV;
+    }
+    yMax = Math.ceil(yMax * 1.2);
+
+    Plotly.react('ldVelocityGraph', [{
+        x: xData, y: yData, mode: 'lines', name: 'Velocity',
+        line: { color: '#007aff', width: 2 }
+    }], {
+        title: 'Velocity over Time', xaxis: { title: 'Time (s)' },
+        yaxis: { title: 'Velocity (m/s)', range: [-yMax, yMax] },
+        margin: { l: 50, r: 20, t: 40, b: 40 }, paper_bgcolor: 'transparent', plot_bgcolor: '#f8f9fa',
+        shapes: [{ type: 'line', x0: xData[0] || 0, x1: xData[xData.length - 1] || 1,
+                   y0: 0, y1: 0, line: { dash: 'dash', color: 'gray' } }]
+    }, { responsive: true });
+
+    Plotly.react('ldSpectrumGraph', [{
+        x: r.specFreqs, y: r.specVals, mode: 'lines', name: 'Spectrum',
+        line: { color: '#ff3b30', width: 1 }, fill: 'tozeroy',
+        fillcolor: 'rgba(255,59,48,0.2)'
+    }], {
+        title: 'Frequency Spectrum', xaxis: { title: 'Frequency (Hz)' },
+        yaxis: { title: 'Magnitude (dB)' },
+        margin: { l: 50, r: 20, t: 40, b: 40 }, paper_bgcolor: 'transparent', plot_bgcolor: '#f8f9fa',
+        shapes: [{ type: 'line', x0: r.centerFreq, x1: r.centerFreq,
+                   y0: -150, y1: 0, line: { dash: 'dash', color: '#27ae60' } }]
+    }, { responsive: true });
+}
+
+function ldInitPlots() {
+    if (ldPlotsInitialized) return;
+    ldPlotsInitialized = true;
+    const base = { margin: { l: 50, r: 20, t: 40, b: 40 }, paper_bgcolor: 'transparent', plot_bgcolor: '#f8f9fa' };
+    Plotly.newPlot('ldVelocityGraph', [], {
+        ...base, title: 'Velocity over Time', xaxis: { title: 'Time (s)' }, yaxis: { title: 'Velocity (m/s)' }
+    }, { responsive: true });
+    Plotly.newPlot('ldSpectrumGraph', [], {
+        ...base, title: 'Frequency Spectrum', xaxis: { title: 'Frequency (Hz)' }, yaxis: { title: 'Magnitude (dB)' }
+    }, { responsive: true });
+}
+
+function ldToggleRecording() {
+    if (!ldRunning) {
+        document.getElementById('ldStatus').textContent = 'Start analyzer first!';
+        return;
+    }
+    if (ldIsRecording) {
+        ldIsRecording = false;
+        document.getElementById('ldRecordBtn').textContent = 'Record';
+        document.getElementById('ldStatus').textContent = 'Recording stopped';
+        return;
+    }
+    ldIsRecording = true;
+    ldRecordedChunks = [];
+    document.getElementById('ldRecordBtn').textContent = 'Pause';
+    document.getElementById('ldStatus').textContent = 'Recording...';
+    ldMediaRecorder = new MediaRecorder(ldMicStream);
+    ldMediaRecorder.ondataavailable = e => { if (e.data.size > 0) ldRecordedChunks.push(e.data); };
+    ldMediaRecorder.start();
+}
+
+async function ldSaveRecording() {
+    if (!ldMediaRecorder || ldRecordedChunks.length === 0) {
+        document.getElementById('ldStatus').textContent = 'No audio recorded';
+        return;
+    }
+    if (ldMediaRecorder.state === 'recording') ldMediaRecorder.stop();
+    ldIsRecording = false;
+    document.getElementById('ldRecordBtn').textContent = 'Record';
+    await new Promise(r => setTimeout(r, 200));
+    const blob = new Blob(ldRecordedChunks, { type: 'audio/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `recorded_doppler_${ts}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+    document.getElementById('ldStatus').textContent = 'Saved: recorded_doppler_' + ts + '.webm';
+    ldRecordedChunks = [];
+}
 
 // =============================================
 // INITIALIZATION
