@@ -22,21 +22,11 @@ let currentY = 20;
 // Dynamic 3D rotation labels
 let rotTextX, rotTextY, rotTextZ;
 
-
 // Step source selection
 let useDeviceStep = false;
 
 // Current IMU sub-tab: '3d' | 'steps' | 'game'
 let currentImuMode = '3d';
-
-// Current Audio sub-tab: 'record' | 'doppler'
-let currentAudioMode = 'record';
-
-// Doppler tracking variables
-let isDopplerActive = false;
-let dopplerHistory = Array(200).fill(0);
-let dopplerIndex = 0;
-
 
 // CSV Recording
 let csvRows = [];
@@ -44,10 +34,13 @@ let csvRecording = false;
 let csvStartTime = 0;
 let csvFilename = '';
 
+// --- LORA METRICS & GRAPHING ---
+let loraCsvRows = [["Timestamp", "Direction", "Message", "LoRa_SNR", "LoRa_RSSI", "BLE_RSSI"]];
+let loraGraphData = []; // Format: { dist: number, lora: number, ble: number | null }
+
 // --- HELPER: Fix 360-degree wrap-around glitch ---
 function lerpAngle(start, end, factor) {
     let diff = end - start;
-    // Wrap around PI
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     return start + (diff * factor);
@@ -78,6 +71,11 @@ function setTab(id) {
     if (id === 'imu') {
         resize3D();
     }
+    
+    // Draw LoRa graph if switching to LoRa tab
+    if (id === 'lora' && loraGraphData.length > 0) {
+        setTimeout(drawLoraRssiChart, 100);
+    }
 }
 
 function setImuMode(mode) {
@@ -92,70 +90,27 @@ function setImuMode(mode) {
     const gameView = document.getElementById('game-view');
     const imuContent = document.getElementById('imu-content');
 
-    // Hide everything first
     if (pedo) pedo.classList.remove('active');
     if (gameView) gameView.classList.remove('active');
     if (graphs) graphs.style.display = 'none';
-    if (imuContent) imuContent.style.display = 'block'; // Default to show 3D container
+    if (imuContent) imuContent.style.display = 'block';
 
-    // Show only what is needed
     if (mode === 'steps') {
         if (pedo) pedo.classList.add('active');
-        if (imuContent) imuContent.style.display = 'none'; // Hide 3D in steps mode
+        if (imuContent) imuContent.style.display = 'none';
     } else if (mode === 'game') {
         if (gameView) gameView.classList.add('active');
-        if (imuContent) imuContent.style.display = 'none'; // Hide 3D in game mode
-        fbResizeCanvas(); // Ensure game canvas is sized right
+        if (imuContent) imuContent.style.display = 'none';
+        fbResizeCanvas();
     } else {
-        // 3D Mode
         if (graphs) graphs.style.display = 'flex';
         setTimeout(resize3D, 50);
-        // Restart the 3D animation loop if it was stopped
         animate();
     }
 }
 
-function setAudioMode(mode) {
-    currentAudioMode = mode;
-    document.querySelectorAll('.sub-btn').forEach(b => b.classList.remove('active'));
-    
-    const activeBtn = document.querySelector(`button[onclick="setAudioMode('${mode}')"]`);
-    if (activeBtn) activeBtn.classList.add('active');
-
-    const recordView = document.getElementById('audio-record-view');
-    const dopplerView = document.getElementById('audio-doppler-view');
-    const laptopView = document.getElementById('audio-laptop-view');
-    const dopplerStats = document.getElementById('dopplerStats');
-    const laptopStats = document.getElementById('laptopStats');
-
-    if (recordView) recordView.style.display = 'none';
-    if (dopplerView) dopplerView.style.display = 'none';
-    if (laptopView) laptopView.style.display = 'none';
-    if (dopplerStats) dopplerStats.style.display = 'none';
-    if (laptopStats) laptopStats.style.display = 'none';
-
-    if (mode !== 'laptop' && ldRunning) ldStop();
-
-    if (mode === 'record') {
-        if (recordView) recordView.style.display = 'block';
-    } else if (mode === 'doppler') {
-        if (dopplerView) dopplerView.style.display = 'block';
-        if (dopplerStats) dopplerStats.style.display = 'grid';
-        stopDoppler();
-    } else if (mode === 'laptop') {
-        if (laptopView) laptopView.style.display = 'block';
-        if (laptopStats) laptopStats.style.display = 'grid';
-        ldInitPlots();
-    }
-}
-
-// =============================================
-// RECALIBRATE
-// =============================================
 function recalibrate() {
-    tPitch = 0;
-    tRoll = 0;
-    tYaw = 0;
+    tPitch = 0; tRoll = 0; tYaw = 0;
     log("Recalibrated: orientation reset to zero.");
 }
 
@@ -163,12 +118,10 @@ function recalibrate() {
 // CSV & RECORDING
 // =============================================
 function toggleStream() {
-    // Show calibration dialog before starting
     const dialog = document.getElementById('calibDialog');
     if (dialog) {
         dialog.style.display = 'flex';
         const goBtn = document.getElementById('calibStartBtn');
-        // Replace listener to avoid stacking
         const newBtn = goBtn.cloneNode(true);
         goBtn.parentNode.replaceChild(newBtn, goBtn);
         newBtn.addEventListener('click', () => {
@@ -192,9 +145,7 @@ function startStreamAfterCalib() {
         btn.innerText = "Streaming...";
         btn.classList.add('btn-streaming');
     }
-    // Reset orientation on start
     recalibrate();
-    // Start CSV recording
     csvRows = [];
     csvRecording = true;
     csvStartTime = performance.now();
@@ -209,7 +160,6 @@ function resetStreamBtn() {
         btn.innerText = "Start Stream";
         btn.classList.remove('btn-streaming');
     }
-    // Stop CSV recording and show download row if data exists
     if (csvRecording && csvRows.length > 0) {
         csvRecording = false;
         const date = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -248,7 +198,6 @@ async function connect() {
         const hex = gid.toString(16).padStart(2, '0');
         const base = `13172b58-${hex}`;
         
-        // Freq Badge
         const freq = 900 + (gid - 1);
         const badge = document.querySelector('.badge'); 
         if(badge) badge.innerText = `${freq} MHz`;
@@ -298,11 +247,9 @@ async function connect() {
         document.getElementById('conBtn').disabled = true;
         document.getElementById('disBtn').disabled = false;
 
-        // Reset Yaw & Timer
         tYaw = 0;
         lastTime = performance.now();
-        targetY = 0; 
-        currentY = 15; 
+        targetY = 0; currentY = 15; 
         if(board3d) board3d.position.y = 15; 
 
         setInterval(() => {
@@ -312,6 +259,14 @@ async function connect() {
         }, 1000);
 
         log("Connected!");
+        
+        // Automatically sync the BLE Scan state on connect
+        setTimeout(() => {
+            const bleScanToggle = document.getElementById('bleScanToggle');
+            if (bleScanToggle && bleScanToggle.checked) {
+                send("BLE_SCAN:ON");
+            }
+        }, 600);
 
     } catch (e) {
         log("Error: " + e);
@@ -343,7 +298,182 @@ async function send(cmd) {
 }
 
 // =============================================
-// DATA HANDLERS (OPTIMIZED)
+// LORA PLOTTING & CHAT LOGIC
+// =============================================
+
+function drawLoraRssiChart() {
+    const cv = document.getElementById('loraChartCanvas');
+    if (!cv || loraGraphData.length === 0) return;
+    
+    const cx = cv.getContext('2d');
+    const w = cv.width = cv.clientWidth;
+    const h = cv.height = cv.clientHeight;
+    
+    cx.clearRect(0, 0, w, h);
+
+    // Increased padX to 40 to fit the Y-axis text
+    const padX = 40; 
+    const padY = 20;
+    const minX = loraGraphData[0].dist;
+    const maxX = Math.max(loraGraphData[loraGraphData.length-1].dist, minX + 1); // Avoid division by 0
+    const minY = -130; // Lowest expected RSSI
+    const maxY = -10;  // Highest expected RSSI
+
+    function getX(val) { return padX + ((val - minX) / (maxX - minX)) * (w - padX * 2); }
+    function getY(val) { return padY + (1 - ((val - minY) / (maxY - minY))) * (h - padY * 2); }
+
+    // --- NEW: Draw Y-Axis Grid Lines & Labels ---
+    cx.font = '10px Inter, sans-serif';
+    cx.textAlign = 'right';
+    cx.textBaseline = 'middle';
+    cx.fillStyle = '#86868b';
+    cx.lineWidth = 1;
+
+    const yTicks = [-130, -100, -70, -40, -10];
+    yTicks.forEach(tick => {
+        const yPos = getY(tick);
+        
+        // Draw the text label (e.g., -70)
+        cx.fillText(tick, padX - 8, yPos);
+        
+        // Draw the horizontal grid line
+        cx.beginPath();
+        cx.strokeStyle = 'rgba(0,0,0,0.05)';
+        cx.moveTo(padX, yPos);
+        cx.lineTo(w - 10, yPos); // Extend to right edge
+        cx.stroke();
+    });
+
+    // Draw main X and Y axis lines
+    cx.strokeStyle = 'rgba(0,0,0,0.15)';
+    cx.beginPath();
+    cx.moveTo(padX, padY); 
+    cx.lineTo(padX, h - padY); // Y-axis
+    cx.lineTo(w - 10, h - padY); // X-axis
+    cx.stroke();
+
+    // --- Draw LoRa Line ---
+    cx.strokeStyle = '#0071e3'; // Primary Blue
+    cx.lineWidth = 2;
+    cx.beginPath();
+    loraGraphData.forEach((pt, i) => {
+        if(i === 0) cx.moveTo(getX(pt.dist), getY(pt.lora));
+        else cx.lineTo(getX(pt.dist), getY(pt.lora));
+    });
+    cx.stroke();
+
+    // --- Draw BLE Line ---
+    cx.strokeStyle = '#34c759'; // Success Green
+    cx.beginPath();
+    let firstBle = true;
+    loraGraphData.forEach((pt) => {
+        if(pt.ble !== null) {
+            if(firstBle) { cx.moveTo(getX(pt.dist), getY(pt.ble)); firstBle = false; }
+            else { cx.lineTo(getX(pt.dist), getY(pt.ble)); }
+        }
+    });
+    cx.stroke();
+
+    // --- Draw Data Points & X-Axis Labels ---
+    cx.textAlign = 'center';
+    
+    loraGraphData.forEach(pt => {
+        // LoRa Dot
+        cx.fillStyle = '#0071e3';
+        cx.beginPath(); cx.arc(getX(pt.dist), getY(pt.lora), 4, 0, Math.PI*2); cx.fill();
+        
+        // BLE Dot
+        if(pt.ble !== null) {
+            cx.fillStyle = '#34c759';
+            cx.beginPath(); cx.arc(getX(pt.dist), getY(pt.ble), 4, 0, Math.PI*2); cx.fill();
+        }
+        
+        // Distance text on X axis
+        cx.fillStyle = '#86868b';
+        cx.fillText(pt.dist + 'm', getX(pt.dist), h - 5);
+    });
+}
+
+function handleControlData(e) {
+    const msg = new TextDecoder().decode(e.target.value);
+    
+    if (msg.startsWith("LORA_RX:")) {
+        // Expected format: LORA_RX:snr|rssi|ble_rssi|message_text
+        let parts = msg.substring(8).split('|');
+        if (parts.length >= 4) {
+            let snr = parts[0];
+            let rssi = parts[1];
+            let ble_rssi = parts[2];
+            let text = parts.slice(3).join('|');
+            
+            // Check for Auto-Plot format (e.g. "1 meter", "5m", "1.5 meters")
+            let distMatch = text.match(/^([\d.]+)\s*m(eter(s)?)?$/i);
+            if (distMatch) {
+                let distance = parseFloat(distMatch[1]);
+                let b_rssi = (ble_rssi === "N/A" || ble_rssi === "None") ? null : parseFloat(ble_rssi);
+                
+                // Add to plotting array and sort by distance
+                loraGraphData.push({ dist: distance, lora: parseFloat(rssi), ble: b_rssi });
+                loraGraphData.sort((a, b) => a.dist - b.dist);
+                
+                // Unhide the panel and draw
+                document.getElementById('loraGraphPanel').style.display = 'block';
+                drawLoraRssiChart();
+            }
+
+            let formattedMsg = `${text}\n<span style="font-size: 0.75rem; opacity: 0.7;">[LoRa SNR: ${snr}, RSSI: ${rssi} | BLE: ${ble_rssi}]</span>`;
+            addChatBubble(formattedMsg, 'in');
+            loraCsvRows.push([new Date().toISOString(), "RX", text, snr, rssi, ble_rssi]);
+        } else {
+            addChatBubble(msg.substring(8), 'in');
+        }
+    } else { 
+        log("Rx: " + msg); 
+    }
+}
+
+async function sendLoRa() {
+    const input = document.getElementById('loraTxt');
+    if (input && input.value) {
+        await send("SEND_LORA:" + input.value);
+        addChatBubble(input.value, 'out');
+        loraCsvRows.push([new Date().toISOString(), "TX", input.value, "", "", ""]);
+        input.value = "";
+    }
+}
+
+function downloadLoraCSV() {
+    if(loraCsvRows.length < 2) {
+        alert("No LoRa data to download yet.");
+        return;
+    }
+    const csvContent = loraCsvRows.map(row => {
+        return row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",");
+    }).join("\n");
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lora_metrics_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+function addChatBubble(txt, type) {
+    const box = document.getElementById('loraChat');
+    if(!box) return;
+    if(box.querySelector('.chat-placeholder')) box.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = `msg ${type}`;
+    div.innerHTML = txt; 
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+// =============================================
+// AUDIO HANDLERS
 // =============================================
 function updateStepDisplay(steps) {
     const stepBigEl = document.getElementById('stepBig');
@@ -362,34 +492,6 @@ function handleStepData(e) {
     updateStepDisplay(steps);
 }
 
-function handleControlData(e) {
-    const msg = new TextDecoder().decode(e.target.value);
-    
-    if (msg.startsWith("LORA:")) {
-        addChatBubble(msg.substring(5), 'in');
-    } else { log("Rx: " + msg); }
-}
-
-function addChatBubble(txt, type) {
-    const box = document.getElementById('loraChat');
-    if(!box) return;
-    if(box.querySelector('.chat-placeholder')) box.innerHTML = '';
-    const div = document.createElement('div');
-    div.className = `msg ${type}`;
-    div.innerText = txt;
-    box.appendChild(div);
-    box.scrollTop = box.scrollHeight;
-}
-
-async function sendLoRa() {
-    const input = document.getElementById('loraTxt');
-    if (input && input.value) {
-        await send("SEND_LORA:" + input.value);
-        addChatBubble(input.value, 'out');
-        input.value = "";
-    }
-}
-
 async function recordAudio() {
     audioChunks = []; isRec = true;
     const recBtn = document.getElementById('recBtn');
@@ -402,20 +504,8 @@ async function recordAudio() {
 }
 
 function handleAudio(e) {
-    const d = new Uint8Array(e.target.value.buffer);
-
-    if (isDopplerActive && d.length > 0 && d.length < 30) {
-        try {
-            const msg = new TextDecoder().decode(d);
-            if (msg.startsWith("Shift:")) {
-                const shiftVal = parseFloat(msg.substring(6));
-                if (!isNaN(shiftVal)) handleDopplerData(shiftVal);
-                return;
-            }
-        } catch (_) {}
-    }
-
     if (!isRec) return;
+    const d = new Uint8Array(e.target.value.buffer);
     if (d.length === 0) {
         isRec = false;
         const recBtn = document.getElementById('recBtn');
@@ -454,88 +544,9 @@ function drawWaveform(data) {
     cx.stroke();
 }
 
-async function startDoppler() {
-    isDopplerActive = true;
-    dopplerHistory = Array(200).fill(0);
-    dopplerIndex = 0;
-    const startBtn = document.getElementById('dopplerStartBtn');
-    const stopBtn = document.getElementById('dopplerStopBtn');
-    if (startBtn) startBtn.disabled = true;
-    if (stopBtn) stopBtn.disabled = false;
-    document.getElementById('dopplerStatus').innerText = "Tracking...";
-    await send("DOPPLER");
-    log("Doppler tracking started");
-}
-
-function stopDoppler() {
-    const wasActive = isDopplerActive;
-    isDopplerActive = false;
-    const startBtn = document.getElementById('dopplerStartBtn');
-    const stopBtn = document.getElementById('dopplerStopBtn');
-    if (startBtn) startBtn.disabled = false;
-    if (stopBtn) stopBtn.disabled = true;
-    document.getElementById('dopplerStatus').innerText = "Stopped";
-    if (wasActive) send("STOP");
-}
-
-function handleDopplerData(shiftValue) {
-    if (!isDopplerActive) return;
-    dopplerHistory[dopplerIndex] = shiftValue;
-    dopplerIndex = (dopplerIndex + 1) % 200;
-    
-    const shiftEl = document.getElementById('dopplerShift');
-    if (shiftEl) shiftEl.innerText = shiftValue.toFixed(1) + ' Hz';
-    
-    drawDopplerGraph();
-}
-
-function drawDopplerGraph() {
-    const c = document.getElementById('dopplerCanvas');
-    if (!c) return;
-    const ctx = c.getContext('2d');
-    const w = c.width = c.clientWidth;
-    const h = c.height = c.clientHeight;
-    const YLIM = 100;
-    const labelMargin = 36;
-    const padY = 14;
-    const plotW = w - labelMargin;
-    const plotH = h - padY * 2;
-    const mid = padY + plotH / 2;
-    
-    ctx.fillStyle = '#0c1445';
-    ctx.fillRect(0, 0, w, h);
-    
-    // Grid lines + Y-axis labels at -100, -50, 0, 50, 100
-    ctx.font = '11px Inter, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    const ticks = [100, 50, 0, -50, -100];
-    for (const tick of ticks) {
-        const y = mid - (tick / YLIM) * (plotH / 2);
-        ctx.strokeStyle = tick === 0 ? 'rgba(0,212,255,0.25)' : 'rgba(0,212,255,0.1)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(labelMargin, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-        ctx.fillStyle = 'rgba(0,212,255,0.5)';
-        ctx.fillText(tick + '', labelMargin - 4, y);
-    }
-    
-    // Draw data (clamped to ±YLIM)
-    ctx.beginPath();
-    ctx.strokeStyle = '#00d4ff';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 200; i++) {
-        const val = Math.max(-YLIM, Math.min(YLIM, dopplerHistory[i]));
-        const x = labelMargin + (i / 200) * plotW;
-        const y = mid - (val / YLIM) * (plotH / 2);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-}
-
+// =============================================
+// IMU & 3D DRAWING
+// =============================================
 let streamTimeout; 
 
 function handleIMU(e) {
@@ -551,7 +562,6 @@ function handleIMU(e) {
 
     ppsCount++;
 
-    // Watchdog to auto-reset button if stream stops
     const btn = document.getElementById('startBtn');
     if (btn && btn.innerText !== "Streaming...") {
         btn.innerText = "Streaming...";
@@ -561,30 +571,22 @@ function handleIMU(e) {
     clearTimeout(streamTimeout);
     streamTimeout = setTimeout(() => { resetStreamBtn(); }, 1000);
 
-    // --- GAME MODE (OPTIMIZATION) ---
-    // In Game Mode, calculate pitch for game and update UI text, but skip heavy 3D/graph operations
     if (currentImuMode === 'game') {
         const imuPitchDeg = Math.atan2(-ax, Math.sqrt(ay * ay + az * az)) * (180 / Math.PI);
         fbHandlePitch(imuPitchDeg);
         
-        // Update Text UI (still needed for sidebar display)
         const accValEl = document.getElementById('accVal');
         const gyroValEl = document.getElementById('gyroVal');
         if (accValEl) accValEl.innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
         if (gyroValEl) gyroValEl.innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
         
-        // Skip 3D math, graphs, and other heavy operations
         return; 
     }
 
-    // --- 3D / NORMAL MODE ---
-    // If we are here, we are NOT in game mode. Proceed with normal logic.
-    
     const now = performance.now();
     const dt = (now - lastTime) / 1000;
     lastTime = now;
 
-    // CSV Recording
     if (csvRecording) {
         const ts = (now - csvStartTime).toFixed(2);
         const stepEl = document.getElementById('stepBig');
@@ -592,21 +594,17 @@ function handleIMU(e) {
         csvRows.push(`${ts},${ax.toFixed(4)},${ay.toFixed(4)},${az.toFixed(4)},${gx.toFixed(4)},${gy.toFixed(4)},${gz.toFixed(4)},${steps}`);
     }
 
-    // Update Text UI
     const accValEl = document.getElementById('accVal');
     const gyroValEl = document.getElementById('gyroVal');
     if (accValEl) accValEl.innerText = `${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}`;
     if (gyroValEl) gyroValEl.innerText = `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
 
-    // Update Graphs Arrays
     accHist.push([ax, ay, az]); accHist.shift();
     gyroHist.push([gx, gy, gz]); gyroHist.shift();
 
-    // 3D Orientation Math
     tPitch = -Math.atan2(-ax, Math.sqrt(ay * ay + az * az));
     tRoll = -Math.atan2(ay, az);
     const gyroRad = gz;
-    // Yaw sign depends on current az: face-up (az>0) → +, face-down (az<0) → -
     tYaw += Math.sign(az || 1) * gyroRad * dt;
 
     const oriP = document.getElementById('oriPitch');
@@ -616,7 +614,6 @@ function handleIMU(e) {
     if (oriR) oriR.innerText = (tRoll * 180 / Math.PI).toFixed(1) + '\u00B0';
     if (oriY) oriY.innerText = (tYaw * 180 / Math.PI).toFixed(1) + '\u00B0';
 
-    // Local Step Counter Logic
     if (!useDeviceStep) {
         const magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
         if (magnitude > 15) {
@@ -627,9 +624,6 @@ function handleIMU(e) {
     }
 }
 
-// =============================================
-// 3D SCENE (THREE.JS)
-// =============================================
 let scene, camera, renderer, board3d;
 
 function init3D() {
@@ -647,14 +641,12 @@ function init3D() {
     scene.add(board3d);
 
     const loader = new THREE.GLTFLoader();
-    // Ensure 'XIAO-nRF52840.glb' is in the SAME folder as this script
     loader.load('XIAO-nRF52840.glb', function (gltf) {
         const model = gltf.scene;
         model.scale.set(120, 120, 120);
         model.rotation.set(Math.PI / 2, 0, Math.PI / 2);
         board3d.add(model);
     }, undefined, function () {
-        // Fallback box if model fails to load
         const geo = new THREE.BoxGeometry(3.5, 0.2, 2);
         const mat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
         board3d.add(new THREE.Mesh(geo, mat));
@@ -699,25 +691,9 @@ function makeArrow(dir, color, len) {
 
 function addAxisArrows(parent) {
     const L = 3.5;
-    parent.add(makeArrow(new THREE.Vector3(0, 0, -1), 0xff3b30, L)); // X — red (Roll, toward USB)
-    parent.add(makeArrow(new THREE.Vector3(-1, 0, 0), 0x34c759, L)); // Y — green (Pitch, device left)
-    parent.add(makeArrow(new THREE.Vector3(0, 1, 0), 0x007aff, L));  // Z — blue (Yaw, up)
-}
-
-function makeTextSprite(text, color) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    ctx.font = 'bold 32px Inter, sans-serif';
-    ctx.fillStyle = color;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 64, 32);
-    const tex = new THREE.CanvasTexture(canvas);
-    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
-    const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(1.6, 0.8, 1);
-    return sprite;
+    parent.add(makeArrow(new THREE.Vector3(0, 0, -1), 0xff3b30, L)); 
+    parent.add(makeArrow(new THREE.Vector3(-1, 0, 0), 0x34c759, L)); 
+    parent.add(makeArrow(new THREE.Vector3(0, 1, 0), 0x007aff, L));  
 }
 
 function createDynamicSprite(text, color) {
@@ -795,15 +771,7 @@ function drawGraph(cv, data, scale) {
 }
 
 function animate() {
-    // OPTIMIZATION: Completely stop the 3D animation loop when not in 3D mode
-    // This eliminates all overhead from Three.js rendering and graph drawing
-    if (currentImuMode !== '3d') {
-        // Don't schedule next frame - completely stop the loop
-        // The loop will restart automatically when switching back to 3D mode via setImuMode
-        return;
-    }
-    
-    // Continue the loop only in 3D mode
+    if (currentImuMode !== '3d') return;
     requestAnimationFrame(animate);
 
     if (board3d) {
@@ -821,7 +789,6 @@ function animate() {
             board3d.rotation.z = tRoll;
             board3d.rotation.y = tYaw;
         }
-        
         if(targetY === 0) {
              board3d.position.y += Math.sin(Date.now() * 0.002) * 0.05;
         }
@@ -859,54 +826,30 @@ const fb = {
     canvas: null, ctx: null,
     W: 800, H: 500,
 
-    BIRD_SIZE: 28,
-    BIRD_X_FRAC: 0.18,
-    PIPE_W: 55,
-    PIPE_GAP: 190,
-    PIPE_SPEED: 2.5, // Base speed (will be multiplied by delta time)
-    PIPE_INTERVAL: 2200,
-    GRAVITY: 0.22, // Base gravity (will be multiplied by delta time)
-    MAX_FALL: 5.5,
-    KEY_FLAP: -5.5,
+    BIRD_SIZE: 28, BIRD_X_FRAC: 0.18,
+    PIPE_W: 55, PIPE_GAP: 190,
+    PIPE_SPEED: 2.5, PIPE_INTERVAL: 2200,
+    GRAVITY: 0.22, MAX_FALL: 5.5, KEY_FLAP: -5.5,
 
-    FLAP_VEL_THRESH: 4,
-    FLAP_RANGE_THRESH: 15,
-    FLAP_POWER_MIN: -5,
-    FLAP_POWER_MAX: -10,
-    FLAP_SENSITIVITY: 0.3,
-    FLAP_COOLDOWN: 120,
-    SWING_TIMEOUT: 300,
+    FLAP_VEL_THRESH: 4, FLAP_RANGE_THRESH: 15,
+    FLAP_POWER_MIN: -5, FLAP_POWER_MAX: -10,
+    FLAP_SENSITIVITY: 0.3, FLAP_COOLDOWN: 120, SWING_TIMEOUT: 300,
 
-    // Delta time tracking for frame-rate independent updates
-    lastFrameTime: 0,
-    targetFPS: 60,
-    frameTime: 1000 / 60, // 16.67ms per frame at 60fps
-
-    running: false, over: false,
-    score: 0, highScore: 0,
-    birdY: 0, vel: 0,
-    pipes: [], lastSpawn: 0, lastFlap: 0,
-    isFlapping: false, flapStrength: 0,
-    mode: 'simple',
-
+    lastFrameTime: 0, targetFPS: 60, frameTime: 1000 / 60, 
+    running: false, over: false, score: 0, highScore: 0,
+    birdY: 0, vel: 0, pipes: [], lastSpawn: 0, lastFlap: 0,
+    isFlapping: false, flapStrength: 0, mode: 'simple',
     pitch: 0, lastPitch: 0, pitchVel: 0,
     swingActive: false, swingStartPitch: 0, swingStartTime: 0, swingRange: 0,
-    stars: [],
-    
-    // Cached background gradient for performance optimization
-    bgGradient: null,
+    stars: [], bgGradient: null,
 
     init() {
         this.canvas = document.getElementById('fbCanvas');
         if (!this.canvas) return;
         this.ctx = this.canvas.getContext('2d');
-        
-        // Initialize frame time tracking
         this.lastFrameTime = performance.now();
 
-        for (let i = 0; i < 40; i++) {
-            this.stars.push([Math.random(), Math.random(), 0.5 + Math.random() * 1.5]);
-        }
+        for (let i = 0; i < 40; i++) this.stars.push([Math.random(), Math.random(), 0.5 + Math.random() * 1.5]);
 
         const startBtn = document.getElementById('fbStartBtn');
         const modeBtn = document.getElementById('fbModeBtn');
@@ -915,21 +858,15 @@ const fb = {
 
         document.addEventListener('keydown', (e) => {
             const gv = document.getElementById('game-view');
-            // Only handle keys if Game Tab is active
             if (!gv || !gv.classList.contains('active')) return;
-            
             if (e.key === ' ' || e.key === 'ArrowUp') {
                 if (this.running) {
                     const now = Date.now();
                     if (now - this.lastFlap > this.FLAP_COOLDOWN) {
-                        this.vel = this.KEY_FLAP;
-                        this.lastFlap = now;
-                        this.isFlapping = true;
-                        this.flapStrength = 0.7;
+                        this.vel = this.KEY_FLAP; this.lastFlap = now;
+                        this.isFlapping = true; this.flapStrength = 0.7;
                     }
-                } else {
-                    this.start();
-                }
+                } else this.start();
                 e.preventDefault();
             }
             if (e.key === 'Enter') {
@@ -941,31 +878,19 @@ const fb = {
         const saved = localStorage.getItem('fbHighScore');
         if (saved) this.highScore = parseInt(saved) || 0;
 
-        this.resize();
-        this.loop();
+        this.resize(); this.loop();
     },
 
     resize() {
         if (!this.canvas) return;
         const cont = document.getElementById('game-view');
         if (!cont) return;
-        this.W = cont.clientWidth || 800;
-        this.H = cont.clientHeight || 500;
-        this.canvas.width = this.W;
-        this.canvas.height = this.H;
+        this.W = cont.clientWidth || 800; this.H = cont.clientHeight || 500;
+        this.canvas.width = this.W; this.canvas.height = this.H;
         const s = this.H / 500;
-        this.BIRD_SIZE = Math.round(28 * s);
-        this.PIPE_GAP = Math.round(190 * s);
-        this.PIPE_W = Math.round(55 * s);
-        // Base speeds (will be multiplied by delta time in update)
-        this.PIPE_SPEED = 2.5 * s;
-        this.GRAVITY = 0.22 * s;
-        this.MAX_FALL = 5.5 * s;
-        this.KEY_FLAP = -5.5 * s;
-        this.FLAP_POWER_MIN = -5 * s;
-        this.FLAP_POWER_MAX = -10 * s;
-        
-        // Clear cached background gradient on resize
+        this.BIRD_SIZE = Math.round(28 * s); this.PIPE_GAP = Math.round(190 * s); this.PIPE_W = Math.round(55 * s);
+        this.PIPE_SPEED = 2.5 * s; this.GRAVITY = 0.22 * s; this.MAX_FALL = 5.5 * s; this.KEY_FLAP = -5.5 * s;
+        this.FLAP_POWER_MIN = -5 * s; this.FLAP_POWER_MAX = -10 * s;
         this.bgGradient = null;
     },
 
@@ -984,16 +909,10 @@ const fb = {
     },
 
     start() {
-        this.running = true;
-        this.over = false;
-        this.score = 0;
-        this.pipes = [];
-        this.birdY = this.H / 2;
-        this.vel = 0;
-        this.lastFlap = 0;
-        this.isFlapping = false;
-        this.lastSpawn = Date.now();
-        this.lastFrameTime = performance.now(); // Initialize frame time tracking
+        this.running = true; this.over = false; this.score = 0;
+        this.pipes = []; this.birdY = this.H / 2; this.vel = 0;
+        this.lastFlap = 0; this.isFlapping = false; this.lastSpawn = Date.now();
+        this.lastFrameTime = performance.now(); 
         const overlay = document.getElementById('fbOverlay');
         if (overlay) overlay.classList.add('hidden');
         document.getElementById('fbScore').innerText = '0';
@@ -1001,11 +920,9 @@ const fb = {
     },
 
     end() {
-        this.running = false;
-        this.over = true;
+        this.running = false; this.over = true;
         if (this.score > this.highScore) {
-            this.highScore = this.score;
-            localStorage.setItem('fbHighScore', this.highScore);
+            this.highScore = this.score; localStorage.setItem('fbHighScore', this.highScore);
         }
         document.getElementById('fbOverlayTitle').innerText = 'Game Over!';
         document.getElementById('fbOverlayScore').innerText = `Score: ${this.score}  |  Best: ${this.highScore}`;
@@ -1015,25 +932,21 @@ const fb = {
     },
 
     spawnPipe() {
-        const minY = this.PIPE_GAP / 2 + 40;
-        const maxY = this.H - this.PIPE_GAP / 2 - 40;
+        const minY = this.PIPE_GAP / 2 + 40, maxY = this.H - this.PIPE_GAP / 2 - 40;
         this.pipes.push({ x: this.W, gapY: Math.random() * (maxY - minY) + minY, scored: false });
     },
 
     handlePitch(newPitch) {
         this.pitchVel = newPitch - this.lastPitch;
-        this.lastPitch = this.pitch;
-        this.pitch = newPitch;
+        this.lastPitch = this.pitch; this.pitch = newPitch;
 
         const pv = document.getElementById('fbPitchVal');
         if (pv) pv.innerText = this.pitch.toFixed(1) + '\u00B0';
 
         const now = Date.now();
         if (!this.swingActive && this.pitchVel < -this.FLAP_VEL_THRESH) {
-            this.swingActive = true;
-            this.swingStartPitch = this.lastPitch;
-            this.swingStartTime = now;
-            this.swingRange = 0;
+            this.swingActive = true; this.swingStartPitch = this.lastPitch;
+            this.swingStartTime = now; this.swingRange = 0;
         }
 
         if (this.swingActive) {
@@ -1043,33 +956,21 @@ const fb = {
 
             const progress = Math.min(1, this.swingRange / this.FLAP_RANGE_THRESH);
             const fill = document.getElementById('fbBarFill');
-            if (fill) {
-                fill.style.width = (progress * 100) + '%';
-                fill.style.background = progress >= 1 ? '#4caf50' : '#00d4ff';
-            }
+            if (fill) { fill.style.width = (progress * 100) + '%'; fill.style.background = progress >= 1 ? '#4caf50' : '#00d4ff'; }
 
-            if (this.swingRange >= this.FLAP_RANGE_THRESH &&
-                now - this.lastFlap > this.FLAP_COOLDOWN && this.running) {
+            if (this.swingRange >= this.FLAP_RANGE_THRESH && now - this.lastFlap > this.FLAP_COOLDOWN && this.running) {
                 let power;
-                if (this.mode === 'simple') {
-                    power = this.KEY_FLAP;
-                    this.flapStrength = 0.7;
-                } else {
+                if (this.mode === 'simple') { power = this.KEY_FLAP; this.flapStrength = 0.7; } 
+                else {
                     const extra = this.swingRange - this.FLAP_RANGE_THRESH;
                     power = Math.max(this.FLAP_POWER_MAX, this.FLAP_POWER_MIN - extra * this.FLAP_SENSITIVITY);
                     this.flapStrength = Math.min(1, this.swingRange / 40);
                 }
-                this.vel = power;
-                this.lastFlap = now;
-                this.isFlapping = true;
-                this.swingActive = false;
-                this.swingRange = 0;
+                this.vel = power; this.lastFlap = now; this.isFlapping = true;
+                this.swingActive = false; this.swingRange = 0;
             }
 
-            if (now - this.swingStartTime > this.SWING_TIMEOUT) {
-                this.swingActive = false;
-                this.swingRange = 0;
-            }
+            if (now - this.swingStartTime > this.SWING_TIMEOUT) { this.swingActive = false; this.swingRange = 0; }
         } else {
             const sv = document.getElementById('fbSwingVal');
             if (sv) sv.innerText = this.pitchVel.toFixed(1) + '\u00B0/f';
@@ -1080,22 +981,14 @@ const fb = {
 
     update() {
         if (!this.running) return;
-        
-        // Calculate delta time for frame-rate independent movement
         const now = performance.now();
-        let deltaTime = (now - this.lastFrameTime) / this.frameTime; // Normalize to 60fps
+        let deltaTime = (now - this.lastFrameTime) / this.frameTime; 
         this.lastFrameTime = now;
-        
-        // Clamp delta time to prevent large jumps (e.g., tab switching)
-        deltaTime = Math.min(deltaTime, 2.0); // Max 2x speed if frame drop
+        deltaTime = Math.min(deltaTime, 2.0); 
         
         const nowMs = Date.now();
-        if (nowMs - this.lastSpawn > this.PIPE_INTERVAL) {
-            this.spawnPipe();
-            this.lastSpawn = nowMs;
-        }
+        if (nowMs - this.lastSpawn > this.PIPE_INTERVAL) { this.spawnPipe(); this.lastSpawn = nowMs; }
         
-        // Apply gravity and movement with delta time
         this.vel += this.GRAVITY * deltaTime;
         if (this.vel > this.MAX_FALL) this.vel = this.MAX_FALL;
         this.birdY += this.vel * deltaTime;
@@ -1105,28 +998,20 @@ const fb = {
         
         for (let i = this.pipes.length - 1; i >= 0; i--) {
             const p = this.pipes[i];
-            // Move pipes with delta time for consistent speed
             p.x -= this.PIPE_SPEED * deltaTime;
             if (!p.scored && p.x + this.PIPE_W < birdX) {
-                p.scored = true;
-                this.score++;
-                document.getElementById('fbScore').innerText = this.score;
+                p.scored = true; this.score++; document.getElementById('fbScore').innerText = this.score;
             }
             if (p.x + this.PIPE_W < 0) { this.pipes.splice(i, 1); continue; }
             if (this.checkCollision(p, birdX)) { this.end(); return; }
         }
-        if (this.birdY <= this.BIRD_SIZE / 2 || this.birdY >= this.H - this.BIRD_SIZE / 2) {
-            this.end();
-        }
+        if (this.birdY <= this.BIRD_SIZE / 2 || this.birdY >= this.H - this.BIRD_SIZE / 2) this.end();
     },
 
     checkCollision(pipe, birdX) {
         const half = this.BIRD_SIZE / 2;
-        const bl = birdX - half, br = birdX + half;
-        const bt = this.birdY - half, bb = this.birdY + half;
-        const pl = pipe.x, pr = pipe.x + this.PIPE_W;
-        const gt = pipe.gapY - this.PIPE_GAP / 2;
-        const gb = pipe.gapY + this.PIPE_GAP / 2;
+        const bl = birdX - half, br = birdX + half, bt = this.birdY - half, bb = this.birdY + half;
+        const pl = pipe.x, pr = pipe.x + this.PIPE_W, gt = pipe.gapY - this.PIPE_GAP / 2, gb = pipe.gapY + this.PIPE_GAP / 2;
         return (br > pl && bl < pr && (bt < gt || bb > gb));
     },
 
@@ -1134,107 +1019,49 @@ const fb = {
         const c = this.ctx, W = this.W, H = this.H;
         if (!c) return;
         
-        // Cache background gradient for performance
         if (!this.bgGradient || this.bgGradient.height !== H) {
             this.bgGradient = c.createLinearGradient(0, 0, 0, H);
             this.bgGradient.addColorStop(0, '#0c1445');
             this.bgGradient.addColorStop(0.5, '#1a237e');
             this.bgGradient.addColorStop(1, '#283593');
-            this.bgGradient.height = H; // Store height for cache invalidation
+            this.bgGradient.height = H; 
         }
-        c.fillStyle = this.bgGradient;
-        c.fillRect(0, 0, W, H);
+        c.fillStyle = this.bgGradient; c.fillRect(0, 0, W, H);
         
-        // Optimize star rendering - batch fill operations
-        c.fillStyle = 'rgba(255,255,255,0.3)';
-        c.beginPath();
-        this.stars.forEach(([fx, fy, r]) => {
-            c.moveTo(fx * W + r, fy * H);
-            c.arc(fx * W, fy * H, r, 0, Math.PI * 2);
-        });
+        c.fillStyle = 'rgba(255,255,255,0.3)'; c.beginPath();
+        this.stars.forEach(([fx, fy, r]) => { c.moveTo(fx * W + r, fy * H); c.arc(fx * W, fy * H, r, 0, Math.PI * 2); });
         c.fill();
         
-        // Draw pipes - create gradient per pipe to avoid flickering
-        // (Pipe count is low, so performance impact is minimal)
         this.pipes.forEach(p => {
-            const gt = p.gapY - this.PIPE_GAP / 2;
-            const gb = p.gapY + this.PIPE_GAP / 2;
-            
-            // Create gradient aligned with pipe position to prevent flickering
+            const gt = p.gapY - this.PIPE_GAP / 2, gb = p.gapY + this.PIPE_GAP / 2;
             const pg = c.createLinearGradient(p.x, 0, p.x + this.PIPE_W, 0);
-            pg.addColorStop(0, '#1b5e20');
-            pg.addColorStop(0.5, '#4caf50');
-            pg.addColorStop(1, '#1b5e20');
+            pg.addColorStop(0, '#1b5e20'); pg.addColorStop(0.5, '#4caf50'); pg.addColorStop(1, '#1b5e20');
             
-            c.fillStyle = pg;
-            c.fillRect(p.x, 0, this.PIPE_W, gt);
-            c.fillRect(p.x, gb, this.PIPE_W, H - gb);
-            c.fillStyle = '#2e7d32';
-            c.fillRect(p.x - 4, gt - 20, this.PIPE_W + 8, 20);
-            c.fillRect(p.x - 4, gb, this.PIPE_W + 8, 20);
+            c.fillStyle = pg; c.fillRect(p.x, 0, this.PIPE_W, gt); c.fillRect(p.x, gb, this.PIPE_W, H - gb);
+            c.fillStyle = '#2e7d32'; c.fillRect(p.x - 4, gt - 20, this.PIPE_W + 8, 20); c.fillRect(p.x - 4, gb, this.PIPE_W + 8, 20);
         });
         
-        // Draw bird
         const bx = W * this.BIRD_X_FRAC, by = this.birdY, sz = this.BIRD_SIZE;
         const rot = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, this.vel * 0.05));
-        c.save();
-        c.translate(bx, by);
-        c.rotate(rot);
-        c.shadowColor = this.isFlapping ? '#ffff00' : '#ffd700';
-        c.shadowBlur = this.isFlapping ? 25 : 12;
-        c.fillStyle = '#ffd700';
-        c.beginPath();
-        c.arc(0, 0, sz / 2, 0, Math.PI * 2);
-        c.fill();
-        c.shadowBlur = 0;
-        c.fillStyle = '#fff';
-        c.beginPath();
-        c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = '#000';
-        c.beginPath();
-        c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = '#ff6600';
-        c.beginPath();
-        c.moveTo(sz / 2, 0);
-        c.lineTo(sz / 2 + sz * 0.35, sz * 0.08);
-        c.lineTo(sz / 2, sz * 0.22);
-        c.fill();
-        c.fillStyle = '#ffb300';
-        c.beginPath();
-        if (this.isFlapping) {
-            c.ellipse(-sz * 0.14, -sz * 0.22, sz * 0.4, sz * 0.28, -0.5, 0, Math.PI * 2);
-        } else {
-            c.ellipse(-sz * 0.14, sz * 0.14, sz * 0.34, sz * 0.22, -0.3, 0, Math.PI * 2);
-        }
-        c.fill();
-        c.restore();
+        c.save(); c.translate(bx, by); c.rotate(rot);
+        c.shadowColor = this.isFlapping ? '#ffff00' : '#ffd700'; c.shadowBlur = this.isFlapping ? 25 : 12;
+        c.fillStyle = '#ffd700'; c.beginPath(); c.arc(0, 0, sz / 2, 0, Math.PI * 2); c.fill();
+        c.shadowBlur = 0; c.fillStyle = '#fff'; c.beginPath(); c.arc(sz * 0.22, -sz * 0.14, sz * 0.22, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#000'; c.beginPath(); c.arc(sz * 0.28, -sz * 0.14, sz * 0.11, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#ff6600'; c.beginPath(); c.moveTo(sz / 2, 0); c.lineTo(sz / 2 + sz * 0.35, sz * 0.08); c.lineTo(sz / 2, sz * 0.22); c.fill();
+        c.fillStyle = '#ffb300'; c.beginPath();
+        if (this.isFlapping) c.ellipse(-sz * 0.14, -sz * 0.22, sz * 0.4, sz * 0.28, -0.5, 0, Math.PI * 2);
+        else c.ellipse(-sz * 0.14, sz * 0.14, sz * 0.34, sz * 0.22, -0.3, 0, Math.PI * 2);
+        c.fill(); c.restore();
         
-        // Draw borders
-        c.strokeStyle = '#00d4ff';
-        c.lineWidth = 2;
-        c.beginPath();
-        c.moveTo(0, 2);
-        c.lineTo(W, 2);
-        c.stroke();
-        c.beginPath();
-        c.moveTo(0, H - 2);
-        c.lineTo(W, H - 2);
-        c.stroke();
+        c.strokeStyle = '#00d4ff'; c.lineWidth = 2; c.beginPath();
+        c.moveTo(0, 2); c.lineTo(W, 2); c.stroke(); c.beginPath(); c.moveTo(0, H - 2); c.lineTo(W, H - 2); c.stroke();
     },
 
     loop() {
-        // OPTIMIZATION: Only run loop if Game Mode is active
         if (currentImuMode === 'game') { 
-            // Only update and draw if game is running (saves CPU when paused)
-            if (this.running) {
-            this.update(); 
-            this.draw(); 
-            } else if (!this.over) {
-                // Draw static frame when game is not running but not over (menu state)
-                this.draw();
-            }
+            if (this.running) { this.update(); this.draw(); } 
+            else if (!this.over) { this.draw(); }
         }
         requestAnimationFrame(() => this.loop());
     }
@@ -1244,293 +1071,29 @@ function fbResizeCanvas() { fb.resize(); }
 function fbHandlePitch(deg) { if (currentImuMode === 'game') fb.handlePitch(deg); }
 
 // =============================================
-// LAPTOP DOPPLER DEMO
-// =============================================
-const LD_SPEED_OF_SOUND = 343.0;
-const LD_MAX_HISTORY = 200;
-const LD_PLOT_INTERVAL = 100;
-
-let ldAudioCtx = null;
-let ldAnalyser = null;
-let ldMicStream = null;
-let ldRunning = false;
-let ldAnimFrameId = null;
-let ldVelHistory = [];
-let ldFreqShiftHistory = [];
-let ldTimeHistory = [];
-let ldStartTime = 0;
-let ldLastPlotTime = 0;
-let ldIsRecording = false;
-let ldMediaRecorder = null;
-let ldRecordedChunks = [];
-let ldPlotsInitialized = false;
-
-function ldFftRadix2(re, im) {
-    const n = re.length;
-    for (let i = 1, j = 0; i < n; i++) {
-        let bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) {
-            let tmp = re[i]; re[i] = re[j]; re[j] = tmp;
-            tmp = im[i]; im[i] = im[j]; im[j] = tmp;
-        }
-    }
-    for (let len = 2; len <= n; len <<= 1) {
-        const halfLen = len >> 1;
-        const ang = -2 * Math.PI / len;
-        const wRe = Math.cos(ang), wIm = Math.sin(ang);
-        for (let i = 0; i < n; i += len) {
-            let curRe = 1, curIm = 0;
-            for (let j = 0; j < halfLen; j++) {
-                const k = i + j, kh = k + halfLen;
-                const tRe = re[kh] * curRe - im[kh] * curIm;
-                const tIm = re[kh] * curIm + im[kh] * curRe;
-                re[kh] = re[k] - tRe; im[kh] = im[k] - tIm;
-                re[k] += tRe; im[k] += tIm;
-                const newCur = curRe * wRe - curIm * wIm;
-                curIm = curRe * wIm + curIm * wRe;
-                curRe = newCur;
-            }
-        }
-    }
-}
-
-async function ldStart() {
-    if (ldRunning) return;
-    const fftSize = Number(document.getElementById('ldFftSize').value);
-    try {
-        ldMicStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-                     channelCount: 1, sampleRate: { ideal: 44100 } }
-        });
-    } catch (e) {
-        document.getElementById('ldStatus').textContent = 'Mic access denied';
-        return;
-    }
-    ldAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-    const source = ldAudioCtx.createMediaStreamSource(ldMicStream);
-    ldAnalyser = ldAudioCtx.createAnalyser();
-    ldAnalyser.fftSize = fftSize;
-    ldAnalyser.smoothingTimeConstant = 0;
-    source.connect(ldAnalyser);
-
-    document.getElementById('ldStatus').textContent = 'Running (' + ldAudioCtx.sampleRate + ' Hz)';
-    document.getElementById('ldStartBtn').disabled = true;
-    document.getElementById('ldStopBtn').disabled = false;
-    ldVelHistory = []; ldFreqShiftHistory = []; ldTimeHistory = [];
-    ldStartTime = performance.now();
-    ldRunning = true;
-    ldTick();
-}
-
-function ldStop() {
-    ldRunning = false;
-    if (ldAnimFrameId) cancelAnimationFrame(ldAnimFrameId);
-    if (ldAudioCtx) { ldAudioCtx.close(); ldAudioCtx = null; }
-    if (ldMicStream) { ldMicStream.getTracks().forEach(t => t.stop()); ldMicStream = null; }
-    document.getElementById('ldStatus').textContent = 'Stopped';
-    document.getElementById('ldStartBtn').disabled = false;
-    document.getElementById('ldStopBtn').disabled = true;
-}
-
-function ldTick() {
-    if (!ldRunning) return;
-    const result = ldAnalyze();
-    if (result) {
-        document.getElementById('ldVelDisplay').textContent = result.velocity.toFixed(2);
-        document.getElementById('ldFreqDisplay').textContent = result.freqShift.toFixed(1) + ' Hz';
-        document.getElementById('ldStrDisplay').textContent = result.signalStrength.toFixed(1) + ' dB';
-
-        const s1 = document.getElementById('ldVelSide');
-        const s2 = document.getElementById('ldFreqSide');
-        const s3 = document.getElementById('ldStrSide');
-        if (s1) s1.innerText = result.velocity.toFixed(2) + ' m/s';
-        if (s2) s2.innerText = result.freqShift.toFixed(1) + ' Hz';
-        if (s3) s3.innerText = result.signalStrength.toFixed(1) + ' dB';
-
-        const now = performance.now();
-        if (now - ldLastPlotTime >= LD_PLOT_INTERVAL) {
-            ldLastPlotTime = now;
-            ldUpdatePlots(result);
-        }
-    }
-    ldAnimFrameId = requestAnimationFrame(ldTick);
-}
-
-function ldAnalyze() {
-    const n = ldAnalyser.fftSize;
-    const timeBuf = new Float32Array(n);
-    ldAnalyser.getFloatTimeDomainData(timeBuf);
-
-    const sampleRate = ldAudioCtx.sampleRate;
-    const centerFreq = Number(document.getElementById('ldCenterFreq').value);
-
-    const re = new Float64Array(n);
-    const im = new Float64Array(n);
-    for (let i = 0; i < n; i++) {
-        re[i] = timeBuf[i] * 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
-    }
-    ldFftRadix2(re, im);
-
-    const halfN = (n >> 1) + 1;
-    const magnitude = new Float64Array(halfN);
-    for (let i = 0; i < halfN; i++) {
-        magnitude[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
-    }
-
-    const binWidth = sampleRate / n;
-    const searchWindow = 500;
-    const minBin = Math.max(0, Math.floor((centerFreq - searchWindow) / binWidth));
-    const maxBin = Math.min(halfN - 1, Math.ceil((centerFreq + searchWindow) / binWidth));
-
-    let peakVal = -1, peakBin = minBin;
-    for (let i = minBin; i <= maxBin; i++) {
-        if (magnitude[i] > peakVal) { peakVal = magnitude[i]; peakBin = i; }
-    }
-    let peakFreq = peakBin * binWidth;
-
-    if (peakBin > minBin && peakBin < maxBin) {
-        const alpha = magnitude[peakBin - 1];
-        const beta = magnitude[peakBin];
-        const gamma = magnitude[peakBin + 1];
-        const denom = alpha - 2 * beta + gamma;
-        if (denom !== 0) peakFreq += 0.5 * (alpha - gamma) / denom * binWidth;
-    }
-
-    const freqShift = peakFreq - centerFreq;
-    const velocity = freqShift * LD_SPEED_OF_SOUND / centerFreq;
-    const signalStrength = 20 * Math.log10(peakVal + 1e-10);
-
-    const now = (performance.now() - ldStartTime) / 1000;
-    ldVelHistory.push(velocity);
-    ldFreqShiftHistory.push(freqShift);
-    ldTimeHistory.push(now);
-    if (ldVelHistory.length > LD_MAX_HISTORY) {
-        ldVelHistory.shift(); ldFreqShiftHistory.shift(); ldTimeHistory.shift();
-    }
-
-    const specFreqs = [], specVals = [];
-    const dispMin = Math.max(0, Math.floor((centerFreq - 500) / binWidth));
-    const dispMax = Math.min(halfN - 1, Math.ceil((centerFreq + 500) / binWidth));
-    for (let i = dispMin; i <= dispMax; i++) {
-        specFreqs.push(i * binWidth);
-        specVals.push(20 * Math.log10(magnitude[i] + 1e-10));
-    }
-    return { velocity, freqShift, signalStrength, specFreqs, specVals, centerFreq };
-}
-
-function ldUpdatePlots(r) {
-    const xData = ldTimeHistory.slice();
-    const yData = ldVelHistory.slice();
-    let yMax = 5;
-    for (let i = 0; i < yData.length; i++) {
-        const absV = Math.abs(yData[i]);
-        if (absV > yMax) yMax = absV;
-    }
-    yMax = Math.ceil(yMax * 1.2);
-
-    Plotly.react('ldVelocityGraph', [{
-        x: xData, y: yData, mode: 'lines', name: 'Velocity',
-        line: { color: '#007aff', width: 2 }
-    }], {
-        title: 'Velocity over Time', xaxis: { title: 'Time (s)' },
-        yaxis: { title: 'Velocity (m/s)', range: [-yMax, yMax] },
-        margin: { l: 50, r: 20, t: 40, b: 40 }, paper_bgcolor: 'transparent', plot_bgcolor: '#f8f9fa',
-        shapes: [{ type: 'line', x0: xData[0] || 0, x1: xData[xData.length - 1] || 1,
-                   y0: 0, y1: 0, line: { dash: 'dash', color: 'gray' } }]
-    }, { responsive: true });
-
-    Plotly.react('ldSpectrumGraph', [{
-        x: r.specFreqs, y: r.specVals, mode: 'lines', name: 'Spectrum',
-        line: { color: '#ff3b30', width: 1 }, fill: 'tozeroy',
-        fillcolor: 'rgba(255,59,48,0.2)'
-    }], {
-        title: 'Frequency Spectrum', xaxis: { title: 'Frequency (Hz)' },
-        yaxis: { title: 'Magnitude (dB)' },
-        margin: { l: 50, r: 20, t: 40, b: 40 }, paper_bgcolor: 'transparent', plot_bgcolor: '#f8f9fa',
-        shapes: [{ type: 'line', x0: r.centerFreq, x1: r.centerFreq,
-                   y0: -150, y1: 0, line: { dash: 'dash', color: '#27ae60' } }]
-    }, { responsive: true });
-}
-
-function ldInitPlots() {
-    if (ldPlotsInitialized) return;
-    ldPlotsInitialized = true;
-    const base = { margin: { l: 50, r: 20, t: 40, b: 40 }, paper_bgcolor: 'transparent', plot_bgcolor: '#f8f9fa' };
-    Plotly.newPlot('ldVelocityGraph', [], {
-        ...base, title: 'Velocity over Time', xaxis: { title: 'Time (s)' }, yaxis: { title: 'Velocity (m/s)' }
-    }, { responsive: true });
-    Plotly.newPlot('ldSpectrumGraph', [], {
-        ...base, title: 'Frequency Spectrum', xaxis: { title: 'Frequency (Hz)' }, yaxis: { title: 'Magnitude (dB)' }
-    }, { responsive: true });
-}
-
-function ldToggleRecording() {
-    if (!ldRunning) {
-        document.getElementById('ldStatus').textContent = 'Start analyzer first!';
-        return;
-    }
-    if (ldIsRecording) {
-        ldIsRecording = false;
-        document.getElementById('ldRecordBtn').textContent = 'Record';
-        document.getElementById('ldStatus').textContent = 'Recording stopped';
-        return;
-    }
-    ldIsRecording = true;
-    ldRecordedChunks = [];
-    document.getElementById('ldRecordBtn').textContent = 'Pause';
-    document.getElementById('ldStatus').textContent = 'Recording...';
-    ldMediaRecorder = new MediaRecorder(ldMicStream);
-    ldMediaRecorder.ondataavailable = e => { if (e.data.size > 0) ldRecordedChunks.push(e.data); };
-    ldMediaRecorder.start();
-}
-
-async function ldSaveRecording() {
-    if (!ldMediaRecorder || ldRecordedChunks.length === 0) {
-        document.getElementById('ldStatus').textContent = 'No audio recorded';
-        return;
-    }
-    if (ldMediaRecorder.state === 'recording') ldMediaRecorder.stop();
-    ldIsRecording = false;
-    document.getElementById('ldRecordBtn').textContent = 'Record';
-    await new Promise(r => setTimeout(r, 200));
-    const blob = new Blob(ldRecordedChunks, { type: 'audio/webm' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    a.href = url;
-    a.download = `recorded_doppler_${ts}.webm`;
-    a.click();
-    URL.revokeObjectURL(url);
-    document.getElementById('ldStatus').textContent = 'Saved: recorded_doppler_' + ts + '.webm';
-    ldRecordedChunks = [];
-}
-
-// =============================================
 // INITIALIZATION
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Init Three.js Scene
     init3D();
-    
-    // 2. Init Game
     fb.init();
     
-    // 3. Attach Step Source Checkbox
     const stepSourceCheckbox = document.getElementById('useDeviceStep');
     if (stepSourceCheckbox) {
-        stepSourceCheckbox.addEventListener('change', (e) => {
-            useDeviceStep = e.target.checked;
-        });
+        stepSourceCheckbox.addEventListener('change', (e) => { useDeviceStep = e.target.checked; });
     }
 
-    // 4. Handle Resizing
     window.addEventListener('resize', () => {
         resize3D();
         fbResizeCanvas();
+        if (loraGraphData.length > 0) drawLoraRssiChart(); // Redraw chart on resize
     });
+
+    const bleScanToggle = document.getElementById('bleScanToggle');
+    if (bleScanToggle) {
+        bleScanToggle.addEventListener('change', (e) => {
+            send(e.target.checked ? "BLE_SCAN:ON" : "BLE_SCAN:OFF");
+        });
+    }
     
-    // 5. Initial console log for debugging
     console.log("IMU Dashboard Initialized. Mode: 3D");
 });
